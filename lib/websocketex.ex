@@ -1,4 +1,6 @@
 defmodule Websocketex do
+	@websocket_version 13
+
   @moduledoc """
   Documentation for Websocketex.
   """
@@ -6,11 +8,47 @@ defmodule Websocketex do
 	def main do
 		# Listen socket, in this case	
 		#[:binary, {:packet, :http_bin}, {:active, false}]
-		{:ok, listenSocket} = listen(5678)
-		{:ok, socket} = accept(listenSocket)
-		Websocketex.send(socket, "HTTP/1.1 200 OK\r\n Connection: close\r\n\r\n")
-		shutdown(socket, :read_write)
-		close(socket)
+		#{:ok, listenSocket} = Websocketex.listen(5678)
+		#{:ok, socket} = Websocketex.accept(listenSocket)
+		#Websocketex.send(socket, "HTTP/1.1 200 OK\r\n Connection: close\r\n\r\n")
+		#Websocketex.shutdown(socket, :read_write)
+		#Websocketex.close(socket)
+		
+		# New and improved listening version
+		Websocketex.listen(5678)
+		|>
+		loop_server
+
+		#listening to https to see what comes
+		#lSocket = listen(5678)
+		#{:ok, socket} = :gen_tcp.accept(lSocket)
+		#{:ok, {:http_error, binary_data}} = recv(socket, 0)
+		#binary_data
+
+		#SSL
+
+		#:ssl.start()
+		#{:ok, lSocket} = :gen_tcp.listen(5678, [{:reuseaddr, true}])
+		#{:ok, socket} = :gen_tcp.accept(lSocket)
+
+		#:inet.setopts(socket, [{:active, false}])
+		
+		# Actual SSL handshake
+		#{:ok, sslSocket} = :ssl.ssl_accept(socket, [])
+		#recv(sslSocket, 0)
+		#:ssl.stop()
+
+	end
+
+	
+	def loop_server(lSocket) do
+		case Websocketex.accept(lSocket) do
+			{:ok, socket} -> 
+				Websocketex.shutdown(socket, :read_write)
+				Websocketex.close(socket)
+				loop_server(lSocket)
+			{:error, reason} -> {:error, reason}
+		end
 	end
 
 	defp process_request(socket, headers) do
@@ -33,6 +71,7 @@ defmodule Websocketex do
 			{:ok, {:http_header, _size, _header_field, _otherfield, _value}} -> process_request(socket, headers)
 			# If an error occurs receiving
 			{:error, reason} -> {:error, reason}
+			{:ok, {:http_error, binary_data}} -> {:ok, {:http_error, binary_data}}
 			# If there is no matching case
 			:error -> Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\n Connection: close\r\n\r\n")
 			# Other procotol version, must thorw error		
@@ -42,13 +81,29 @@ defmodule Websocketex do
 		end
 	end
 
+	# TODO: Implement TLS/SSL socket handshake
+	# TODO: Implement Origin validation
+	# TODO: Implement Version validation
+	# TODO: Implement Subprotocol validation and response
+	# TODO: Implement Extensions validation adn response
+	defp send_handshake(socket, headers) do
+		# String defined in RFC 6455 to concatinate with Sec-Websocket-key
+		accept_string = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+		# Concatinate the key in the headers with the accept string,  hash that with SHA-1 and finally base64 encode it.
+		sec_websocket_accept = Base.encode64(:crypto.hash(:sha, headers.sec_websocket_key <> accept_string))
+		Websocketex.send(socket, "HTTP/1.1 Switching Protocols\r\n Upgrade: websocket\r\n Connection: Upgrade\r\n Sec-Websocket-Accept: " <> sec_websocket_accept <> "\r\n\r\n")
+	end
+
 	def close(socket) do
 		:gen_tcp.close(socket)
 	end
 
 	#[:binary, {:packet, 0}, {:active, false}]
 	def listen(port, options \\ [:list, {:packet, :http_bin}, {:active, false}, {:reuseaddr, true}]) do
-		:gen_tcp.listen(port, options)
+		case :gen_tcp.listen(port, options) do
+			{:ok, listenSocket} -> listenSocket
+			{:error, reason} -> {:error, reason}
+		end
 	end
 
 	def accept(socket) do
@@ -60,7 +115,13 @@ defmodule Websocketex do
 						if !Websocketex.Headers.check_headers(headers) do
 							Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\n Connection: closed\r\n\r\n")
 						end
-						{:ok, socket}
+						# Try to send the handshake
+						case send_handshake(socket, headers) do
+							:ok -> {:ok, socket}
+							{:error, reason} -> 
+								Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\n Connection: closed\r\n\r\n")
+								{:error, reason}
+						end
 					{:error, reason} -> {:error, reason}
 				end
 			{:error, reason} -> {:error, reason}
