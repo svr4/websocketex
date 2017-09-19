@@ -1,4 +1,5 @@
 defmodule Websocketex do
+	use Agent
 	@websocket_version 13
 
   @moduledoc """
@@ -18,6 +19,11 @@ defmodule Websocketex do
 		Websocketex.listen(5678)
 		|>
 		loop_server
+
+		#start_agent(%Websocketex.ServerOptions{})
+		#save_agent("protocols", "test")
+		#get_agent()
+		#Agent.stop(__MODULE__, :normal)
 
 		#listening to https to see what comes
 		#lSocket = listen(5678)
@@ -47,7 +53,7 @@ defmodule Websocketex do
 				Websocketex.shutdown(socket, :read_write)
 				Websocketex.close(socket)
 				loop_server(lSocket)
-			{:error, reason} -> {:error, reason}
+			{:error, reason} ->	{:error, reason}
 		end
 	end
 
@@ -82,16 +88,64 @@ defmodule Websocketex do
 	end
 
 	# TODO: Implement TLS/SSL socket handshake
-	# TODO: Implement Origin validation
-	# TODO: Implement Version validation
-	# TODO: Implement Subprotocol validation and response
-	# TODO: Implement Extensions validation adn response
 	defp send_handshake(socket, headers) do
-		# String defined in RFC 6455 to concatinate with Sec-Websocket-key
-		accept_string = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-		# Concatinate the key in the headers with the accept string,  hash that with SHA-1 and finally base64 encode it.
-		sec_websocket_accept = Base.encode64(:crypto.hash(:sha, headers.sec_websocket_key <> accept_string))
-		Websocketex.send(socket, "HTTP/1.1 Switching Protocols\r\n Upgrade: websocket\r\n Connection: Upgrade\r\n Sec-Websocket-Accept: " <> sec_websocket_accept <> "\r\n\r\n")
+		if String.to_integer(headers.sec_websocket_version) != @websocket_version do
+			Websocketex.send(socket, "HTTP/1.1 426 Upgrade Required\r\n Sec-WebSocket-Version: " <> Integer.to_string(@websocket_version) <> "\r\n\r\n")
+		else
+			# Server options the developer set
+			%Websocketex.ServerOptions{extensions: extensions, origins: origins, protocols: protocols} = get_agent()
+			case check_origin(origins, headers.origin) do
+				true -> 
+					# String defined in RFC 6455 to concatinate with Sec-Websocket-key
+					accept_string = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+					# Concatinate the key in the headers with the accept string,  hash that with SHA-1 and finally base64 encode it.
+					sec_websocket_accept = Base.encode64(:crypto.hash(:sha, headers.sec_websocket_key <> accept_string))
+					# Send handshake
+					Websocketex.send(socket, "HTTP/1.1 101 Switching Protocols\r\n Upgrade: websocket\r\n Connection: Upgrade\r\n Sec-WebSocket-Accept: " 
+						<> sec_websocket_accept
+						<> if protocols do "Sec-WebSocket-Protocol: " <> Enum.join(protocols, ",") <> "\r\n" else "" end
+						<> if extensions do "Sec-WebSocket-Extensions: " <> Enum.join(extensions, ",") <> "\r\n" else "" end
+						<> "\r\n\r\n")
+
+				false -> Websocketex.send(socket, "HTTP/1.1 403 Forbidden\r\n Connection: close\r\n\r\n")
+			end
+		end
+
+	end
+
+	defp check_origin(origins, origin) do	
+		# If allowed origins doesn't contain all (*)
+		if !Enum.member?(origins, "*") do
+			# If supplied origin header is null send 403 error code
+			if !origin do
+				false
+			else
+			# If supplied header is not null then check if it's in the whitelist, if not send 403 error
+				if !Enum.member?(origins, origin) do
+					false
+				else
+					true
+				end
+			end
+		else
+			true # All good
+		end
+	end
+
+	defp start_agent(server_options) do
+		Agent.start_link(fn -> server_options end, name: __MODULE__)
+	end
+
+	defp save_agent(key, value) do
+		Agent.update(__MODULE__, fn state -> Map.put(state, String.to_existing_atom(key), value) end)
+	end
+
+	defp get_agent() do
+		Agent.get(__MODULE__, fn state -> state end)
+	end
+	
+	defp stop_agent() do
+		Agent.stop(__MODULE__, :normal)
 	end
 
 	def close(socket) do
@@ -99,9 +153,13 @@ defmodule Websocketex do
 	end
 
 	#[:binary, {:packet, 0}, {:active, false}]
-	def listen(port, options \\ [:list, {:packet, :http_bin}, {:active, false}, {:reuseaddr, true}]) do
+	# TODO: Work with adding "global variable" for server options
+	def listen(port, options \\ [:list, {:packet, :http_bin}, {:active, false}, {:reuseaddr, true}], server_options \\ %Websocketex.ServerOptions{}) do
 		case :gen_tcp.listen(port, options) do
-			{:ok, listenSocket} -> listenSocket
+			{:ok, listenSocket} -> 
+				# Save server options into an Agent, so the process state can be accesed throughout functions
+				start_agent(server_options)
+				listenSocket
 			{:error, reason} -> {:error, reason}
 		end
 	end
