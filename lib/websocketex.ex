@@ -18,6 +18,7 @@ defmodule Websocketex do
 		#Websocketex.close(socket)
 		
 		# New and improved listening version
+		#Websocketex.listen(5678, %Websocketex.ServerOptions{ssl: true, certificate: "domain.crt", key: "domain.key"})
 		Websocketex.listen(5678)
 		|>
 		loop_server
@@ -183,7 +184,18 @@ defmodule Websocketex do
 	end
 
 	defp start_agent(server_options) do
-		Agent.start_link(fn -> server_options end, name: __MODULE__)
+
+		pid = Process.whereis(__MODULE__)
+
+		if pid == nil do
+			Agent.start_link(fn -> server_options end, name: __MODULE__)
+		else
+			if Process.alive?(pid) do
+				stop_agent()
+				Agent.start_link(fn -> server_options end, name: __MODULE__)
+			end
+		end
+
 	end
 
 	defp save_agent(key, value) do
@@ -206,19 +218,32 @@ defmodule Websocketex do
 		end
 	end
 
+	def listen(port, server_options) do	
+		options = [:list, {:packet, :http_bin}, {:active, false}, {:reuseaddr, true}]
+		Websocketex.listen(port, options, server_options)
+	end
+
 	def listen(port, options \\ [:list, {:packet, :http_bin}, {:active, false}, {:reuseaddr, true}], server_options \\ %Websocketex.ServerOptions{}) do
 		# If the server is configured as an ssl
 		if server_options.ssl do
-			if is_nil(server_options.certificate) or is_nil(server_options.key) do
-				{:error, "SSL/TLS server requires a Certificate and a Key file."}
-			end
 			:ssl.start()
 		end
 		case :gen_tcp.listen(port, options) do
-			{:ok, listenSocket} -> 
-				# Save server options into an Agent, so the process state can be accesed throughout functions
-				start_agent(server_options)
-				listenSocket
+			{:ok, listenSocket} ->
+			
+				if server_options.ssl do
+					if is_nil(server_options.certificate) or is_nil(server_options.key) do
+						{:error, "SSL/TLS server requires a Certificate and a Key file."}
+					else
+						# Save server options into an Agent, so the process state can be accesed throughout functions
+						start_agent(server_options)
+						listenSocket
+					end
+				else
+					# Save server options into an Agent, so the process state can be accesed throughout functions
+					start_agent(server_options)
+					listenSocket
+				end 
 			{:error, reason} -> {:error, reason}
 		end
 	end
@@ -241,6 +266,14 @@ defmodule Websocketex do
 		end
 	end
 
+	defp ssl_accept(socket, ca, cert, key) do
+		if is_nil(ca) do
+			:ssl.ssl_accept(socket, [{:certfile, cert}, {:keyfile, key}], @timeout)
+		else
+			:ssl.ssl_accept(socket, [{:cacertfile, ca}, {:certfile, cert}, {:keyfile, key}], @timeout)
+		end
+	end
+
 	def accept(socket) do
 		case :gen_tcp.accept(socket) do
 			{:ok, socket} ->
@@ -248,7 +281,8 @@ defmodule Websocketex do
 				%Websocketex.ServerOptions{ssl: is_ssl}	= get_agent()
 				# Check if handshake should execute	
 				if is_ssl do
-					case :ssl.ssl_accept(socket, [{:certfile, "domain.crt"}, {:keyfile, "domain.key"}], @timeout) do
+					%Websocketex.ServerOptions{caCertificate: ca, certificate: cert, key: key} = get_agent()
+					case ssl_accept(socket, ca, cert, key) do
  						# It's an ssl connection
 						{:ok, sslSocket} -> accept_helper(sslSocket)
 						{:error, _reason} -> 
