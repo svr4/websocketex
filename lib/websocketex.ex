@@ -48,7 +48,7 @@ defmodule Websocketex do
 				#IO.puts "Socket connected."
 				#:inet.setopts(socket, [{:active, false}])
 				#IO.puts "Opts changed"
-				# Successfull recv() on https request returns
+				#Successfull recv() on https request returns
 				# {:ok, [22, 3, 1, 1, 30, 1, 0, 1, 26, 3, 3, 117, 255, 244, 104, 65, 105, 224, 161,
   			# 117, 108, 129, 192, 121, 22, 210, 130, 2, 83, 253, 1, 196, 247, 142, 195, 168,
   			# 191, 162, 184, 79, 118, 119, 156, 0, 0, 118, 192, 48, 192, ...]}
@@ -56,6 +56,23 @@ defmodule Websocketex do
 				# Actual SSL handshake
 				#IO.puts "Handshake"
 				#{:ok, sslSocket} = :ssl.ssl_accept(socket, [{:certfile, "domain.crt"}, {:keyfile, "domain.key"}])
+				#case :ssl.ssl_accept(socket, [{:certfile, "domain.crt"}, {:keyfile, "domain.key"}], 20) do
+					#{:ok, sslSocket} ->
+						#IO.puts "Socket secure"
+						#IO.puts Record.is_record(socket, :sslsocket)
+						#:ssl.recv(sslSocket, 0)
+						#:ssl.shutdown(sslSocket, :read_write)
+						#:ssl.close(sslSocket)
+						#:ssl.stop()
+						#IO.puts "SSL stop"
+					#{:error, reason} ->
+						#IO.puts "Socket insecure"
+						#IO.puts Record.is_record(socket, :sslsocket)
+						#:gen_tcp.recv(socket, 0)
+						#:gen_tcp.shutdown(socket, :read_write)
+						#:gen_tcp.close(socket)
+				#end
+			#end
 				#:ssl.recv(sslSocket, 0)
 				#:ssl.stop()
 				#IO.puts "SSL stop"
@@ -79,7 +96,9 @@ defmodule Websocketex do
 				Websocketex.shutdown(socket, :read_write)
 				Websocketex.close(socket)
 				loop_server(lSocket)
-			{:error, reason} ->	{:error, reason}
+			{:error, reason} ->	
+				IO.puts reason
+				loop_server(lSocket)
 		end
 	end
 
@@ -109,12 +128,12 @@ defmodule Websocketex do
 			{:ok, {:http_request, _method, {:abs_path, _path}, {1,0}}} -> Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\n Connection: close\r\n\r\n")
 			# End of Headers
 			{:ok, :http_eoh} -> {:ok, socket, headers}
-			# SSL request, must upgrade and extract headers
-			#{:ok, {:http_error, _binary}} ->
-				#:ssl.start()	
-				#case :ssl.ssl_accept(socket, [{:certfile, "domain.crt"}, {:keyfile, "domain.key"}]) do
-					#{:ok, sslSocket} -> process_request(sslSocket, headers)
-				#end
+			# SSL request on non SSL server socket
+			{:ok, {:http_error, _binary}} ->
+				# Refuse, close connection on client
+				Websocketex.send(socket, "HTTP/1.1 403 Forbidden\r\n Connection: close\r\n\r\n")
+				# Exception
+				{:error, "Protocol error. Cannot connect to non SSL/TLS socket."}
 		end
 	end
 
@@ -187,10 +206,14 @@ defmodule Websocketex do
 		end
 	end
 
-	#[:binary, {:packet, 0}, {:active, false}]
-	# TODO: Work with adding "global variable" for server options
 	def listen(port, options \\ [:list, {:packet, :http_bin}, {:active, false}, {:reuseaddr, true}], server_options \\ %Websocketex.ServerOptions{}) do
-		:ssl.start() #assume ssl socket
+		# If the server is configured as an ssl
+		if server_options.ssl do
+			if is_nil(server_options.certificate) or is_nil(server_options.key) do
+				{:error, "SSL/TLS server requires a Certificate and a Key file."}
+			end
+			:ssl.start()
+		end
 		case :gen_tcp.listen(port, options) do
 			{:ok, listenSocket} -> 
 				# Save server options into an Agent, so the process state can be accesed throughout functions
@@ -221,30 +244,22 @@ defmodule Websocketex do
 	def accept(socket) do
 		case :gen_tcp.accept(socket) do
 			{:ok, socket} ->
-				
-				case :ssl.ssl_accept(socket, [{:certfile, "domain.crt"}, {:keyfile, "domain.key"}], @timeout) do
- 					# It's an ssl connection
-					{:ok, sslSocket} -> accept_helper(sslSocket)
-					# If ssl timesout, its regular http
-					{:error, _reason} -> accept_helper(socket)
+				# Get if the server is SSL/TLS capable or not	
+				%Websocketex.ServerOptions{ssl: is_ssl}	= get_agent()
+				# Check if handshake should execute	
+				if is_ssl do
+					case :ssl.ssl_accept(socket, [{:certfile, "domain.crt"}, {:keyfile, "domain.key"}], @timeout) do
+ 						# It's an ssl connection
+						{:ok, sslSocket} -> accept_helper(sslSocket)
+						{:error, _reason} -> 
+							Websocketex.send(socket, "HTTP/1.1 403 Forbidden\r\n Connection: closed\r\n\r\n")
+							# Send error back up
+							{:error, "SSL/TLS handshake timedout."}
+					end
+				else
+					accept_helper(socket)
 				end
-
-			{:error, reason} -> {:error, reason}
-		end
-	end
-
-	def accept(socket, timeout) do	
-		case :gen_tcp.accept(socket, timeout) do
-			{:ok, socket} -> 
-				case process_request(socket, %Websocketex.Headers{}) do
-					{:ok, socket, headers} -> 
-						# Check if http headers are valid 
-						if !Websocketex.Headers.check_headers(headers) do
-							Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\n Connection: closed\r\n\r\n")
-						end
-						{:ok, socket}
-					{:error, reason} -> {:error, reason}
-				end
+	
 			{:error, reason} -> {:error, reason}
 		end
 	end
