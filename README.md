@@ -2,6 +2,8 @@
 
 Work in progress.
 
+* Added support for handling handshake over HTTP or HTTPS
+
 <!--## Installation
 
 If [available in Hex](https://hex.pm/docs/publish), the package can be installed
