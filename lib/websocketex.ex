@@ -8,101 +8,6 @@ defmodule Websocketex do
   Documentation for Websocketex.
   """
 
-	def main do
-		# Listen socket, in this case	
-		#[:binary, {:packet, :http_bin}, {:active, false}]
-		#{:ok, listenSocket} = Websocketex.listen(5678)
-		#{:ok, socket} = Websocketex.accept(listenSocket)
-		#Websocketex.send(socket, "HTTP/1.1 200 OK\r\n Connection: close\r\n\r\n")
-		#Websocketex.shutdown(socket, :read_write)
-		#Websocketex.close(socket)
-		
-		# New and improved listening version
-		#Websocketex.listen(5678, %Websocketex.ServerOptions{ssl: true, certificate: "domain.crt", key: "domain.key"})
-		Websocketex.listen(5678)
-		|>
-		loop_server
-
-		# View http headers
-		#lSocket = Websocketex.listen(5678)
-		#{:ok, socket} = :gen_tcp.accept(lSocket)
-		#:gen_tcp.recv(socket, 0)
-
-		#start_agent(%Websocketex.ServerOptions{})
-		#save_agent("protocols", "test")
-		#get_agent()
-		#Agent.stop(__MODULE__, :normal)
-
-		#listening to https to see what comes
-		#lSocket = listen(5678)
-		#{:ok, socket} = :gen_tcp.accept(lSocket)
-		#{:ok, {:http_error, binary_data}} = recv(socket, 0)
-		#binary_data
-
-		#SSL
-
-		#:ssl.start()
-		#{:ok, lSocket} = :gen_tcp.listen(5678, [{:reuseaddr, true}])
-		#{:ok, socket} = :gen_tcp.accept(lSocket)
-		#case :gen_tcp.accept(lSocket) do
-			#{:ok, socket} ->
-				#IO.puts "Socket connected."
-				#:inet.setopts(socket, [{:active, false}])
-				#IO.puts "Opts changed"
-				#Successfull recv() on https request returns
-				# {:ok, [22, 3, 1, 1, 30, 1, 0, 1, 26, 3, 3, 117, 255, 244, 104, 65, 105, 224, 161,
-  			# 117, 108, 129, 192, 121, 22, 210, 130, 2, 83, 253, 1, 196, 247, 142, 195, 168,
-  			# 191, 162, 184, 79, 118, 119, 156, 0, 0, 118, 192, 48, 192, ...]}
-
-				# Actual SSL handshake
-				#IO.puts "Handshake"
-				#{:ok, sslSocket} = :ssl.ssl_accept(socket, [{:certfile, "domain.crt"}, {:keyfile, "domain.key"}])
-				#case :ssl.ssl_accept(socket, [{:certfile, "domain.crt"}, {:keyfile, "domain.key"}], 20) do
-					#{:ok, sslSocket} ->
-						#IO.puts "Socket secure"
-						#IO.puts Record.is_record(socket, :sslsocket)
-						#:ssl.recv(sslSocket, 0)
-						#:ssl.shutdown(sslSocket, :read_write)
-						#:ssl.close(sslSocket)
-						#:ssl.stop()
-						#IO.puts "SSL stop"
-					#{:error, reason} ->
-						#IO.puts "Socket insecure"
-						#IO.puts Record.is_record(socket, :sslsocket)
-						#:gen_tcp.recv(socket, 0)
-						#:gen_tcp.shutdown(socket, :read_write)
-						#:gen_tcp.close(socket)
-				#end
-			#end
-				#:ssl.recv(sslSocket, 0)
-				#:ssl.stop()
-				#IO.puts "SSL stop"
-
-			#{:error, reason} -> {:error, reason}
-		#end
-
-		#:inet.setopts(socket, [{:active, false}])
-		
-		# Actual SSL handshake
-		#{:ok, sslSocket} = :ssl.ssl_accept(socket, [])
-		#recv(sslSocket, 0)
-		#:ssl.stop()
-
-	end
-
-	
-	def loop_server(lSocket) do
-		case Websocketex.accept(lSocket) do
-			{:ok, socket} -> 
-				Websocketex.shutdown(socket, :read_write)
-				Websocketex.close(socket)
-				loop_server(lSocket)
-			{:error, reason} ->	
-				IO.puts reason
-				loop_server(lSocket)
-		end
-	end
-
 	defp process_request(socket, headers) do
 		case recv(socket, 0) do
 			# Get protocol, method and uri
@@ -138,7 +43,6 @@ defmodule Websocketex do
 		end
 	end
 
-	# TODO: Implement TLS/SSL socket handshake
 	defp send_handshake(socket, headers) do
 		if String.to_integer(headers.sec_websocket_version) != @websocket_version do
 			Websocketex.send(socket, "HTTP/1.1 426 Upgrade Required\r\n Sec-WebSocket-Version: " <> Integer.to_string(@websocket_version) <> "\r\n\r\n")
