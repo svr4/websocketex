@@ -29,15 +29,15 @@ defmodule Websocketex do
 			# If an error occurs receiving
 			{:error, reason} -> {:error, reason}
 			# If there is no matching case
-			:error -> Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\n Connection: close\r\n\r\n")
+			:error -> Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
 			# Other procotol version, must thorw error		
-			{:ok, {:http_request, _method, {:abs_path, _path}, {1,0}}} -> Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\n Connection: close\r\n\r\n")
+			{:ok, {:http_request, _method, {:abs_path, _path}, {1,0}}} -> Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
 			# End of Headers
 			{:ok, :http_eoh} -> {:ok, socket, headers}
 			# SSL request on non SSL server socket
 			{:ok, {:http_error, _binary}} ->
 				# Refuse, close connection on client
-				Websocketex.send(socket, "HTTP/1.1 403 Forbidden\r\n Connection: close\r\n\r\n")
+				Websocketex.send(socket, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
 				# Exception
 				{:error, "Protocol error. Cannot connect to non SSL/TLS socket."}
 		end
@@ -45,7 +45,7 @@ defmodule Websocketex do
 
 	defp send_handshake(socket, headers) do
 		if String.to_integer(headers.sec_websocket_version) != @websocket_version do
-			Websocketex.send(socket, "HTTP/1.1 426 Upgrade Required\r\n Sec-WebSocket-Version: " <> Integer.to_string(@websocket_version) <> "\r\n\r\n")
+			Websocketex.send(socket, "HTTP/1.1 426 Upgrade Required\r\nSec-WebSocket-Version: " <> Integer.to_string(@websocket_version) <> "\r\n\r\n")
 		else
 			# Server options the developer set
 			%Websocketex.ServerOptions{extensions: extensions, origins: origins, protocols: protocols} = get_agent()
@@ -56,13 +56,15 @@ defmodule Websocketex do
 					# Concatinate the key in the headers with the accept string,  hash that with SHA-1 and finally base64 encode it.
 					sec_websocket_accept = Base.encode64(:crypto.hash(:sha, headers.sec_websocket_key <> accept_string))
 					# Send handshake
-					Websocketex.send(socket, "HTTP/1.1 101 Switching Protocols\r\n Upgrade: websocket\r\n Connection: Upgrade\r\n Sec-WebSocket-Accept: " 
+					Websocketex.send(socket, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " 
 						<> sec_websocket_accept
 						<> if protocols do "Sec-WebSocket-Protocol: " <> Enum.join(protocols, ",") <> "\r\n" else "" end
 						<> if extensions do "Sec-WebSocket-Extensions: " <> Enum.join(extensions, ",") <> "\r\n" else "" end
 						<> "\r\n\r\n")
+					# After handshake you must change server opts in order to receive data.
+					:inet.setopts(socket, [{:packet, 0}])
 
-				false -> Websocketex.send(socket, "HTTP/1.1 403 Forbidden\r\n Connection: close\r\n\r\n")
+				false -> Websocketex.send(socket, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
 			end
 		end
 
@@ -123,11 +125,11 @@ defmodule Websocketex do
 	end
 
 	def listen(port, server_options) do	
-		options = [:list, {:packet, :http_bin}, {:active, false}, {:reuseaddr, true}]
+		options = [:binary, {:packet, :http_bin}, {:active, false}, {:reuseaddr, true}]
 		Websocketex.listen(port, options, server_options)
 	end
 
-	def listen(port, options \\ [:list, {:packet, :http_bin}, {:active, false}, {:reuseaddr, true}], server_options \\ %Websocketex.ServerOptions{}) do
+	def listen(port, options \\ [:binary, {:packet, :http_bin}, {:active, false}, {:reuseaddr, true}], server_options \\ %Websocketex.ServerOptions{}) do
 		# If the server is configured as an ssl
 		if server_options.ssl do
 			:ssl.start()
@@ -141,7 +143,7 @@ defmodule Websocketex do
 					else
 						# Save server options into an Agent, so the process state can be accesed throughout functions
 						start_agent(server_options)
-						listenSocket
+						listenSocket 
 					end
 				else
 					# Save server options into an Agent, so the process state can be accesed throughout functions
@@ -157,13 +159,13 @@ defmodule Websocketex do
 			{:ok, socket, headers} ->
 				# Check if http headers are valid 
 				if !Websocketex.Headers.check_headers(headers) do
-					Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\n Connection: closed\r\n\r\n")
+					Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\nConnection: closed\r\n\r\n")
 				end
 				# Try to send the handshake
 				case send_handshake(socket, headers) do
 					:ok -> {:ok, socket}
 					{:error, reason} -> 
-						Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\n Connection: closed\r\n\r\n")
+						Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\nConnection: closed\r\n\r\n")
 						{:error, reason}
 				end
 			{:error, reason} -> {:error, reason}
@@ -190,7 +192,7 @@ defmodule Websocketex do
  						# It's an ssl connection
 						{:ok, sslSocket} -> accept_helper(sslSocket)
 						{:error, _reason} -> 
-							Websocketex.send(socket, "HTTP/1.1 403 Forbidden\r\n Connection: closed\r\n\r\n")
+							Websocketex.send(socket, "HTTP/1.1 403 Forbidden\r\nConnection: closed\r\n\r\n")
 							# Send error back up
 							{:error, "SSL/TLS handshake timedout."}
 					end
