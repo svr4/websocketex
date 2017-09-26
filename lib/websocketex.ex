@@ -43,7 +43,6 @@ defmodule Websocketex do
 		end
 	end
 
-	# TODO: Implement TLS/SSL socket handshake
 	defp send_handshake(socket, headers) do
 		if String.to_integer(headers.sec_websocket_version) != @websocket_version do
 			Websocketex.send(socket, "HTTP/1.1 426 Upgrade Required\r\nSec-WebSocket-Version: " <> Integer.to_string(@websocket_version) <> "\r\n\r\n")
