@@ -357,29 +357,34 @@ defmodule Websocketex do
 						# Now get the data in the frame
 						case Websocketex.recv(socket, payload_data_length) do
 							{:ok, rest} ->
-								# Hardcoding conversion to text, but I must check opcode when converting
-								data = unmask_data(masking_key, rest)
-								# Checking for fragmentation
-								if opcode_is?(opcode, :text) do
-									acc = acc <> data
-								else
-									if opcode_is?(opcode, :binary) do
-										acc = <<acc::binary, data::binary>>
-									end
-								end
-								# End of frames for that message, return data
-								if fin == 1 do
-									acc
-								else
-									# We're dealing with a fragmentation of some kind
-									cond do
-										# Fragmentation starts
-										fin == 0 and opcode > 0 ->
-										# Whole bunch of fragmented frames
-										fin == 0 and opcode == 0 ->
-										#The end. Return data.
-										fin == 1 and opcode == 0 -> acc
-									end
+								cond do
+									# Fragmentation starts
+									# Not the last frame and a control frame
+									fin == 0 and opcode >= 0x8 ->
+										handle_control_frames(opcode, socket)
+										# Get the next fragment
+										Websocketex.recv(socket, 2)
+										|>
+										handle_frame(socket, acc)
+									# Whole bunch of fragmented frames
+									fin == 0 and opcode == 0 ->
+										# Concat the fragmented data
+										acc = <<acc::binary, rest::binary>>
+										# Get the next fragment
+										Websocketex.recv(socket, 2)
+										|>
+										handle_frame(socket, acc)
+									#The end of fragments. Return data.
+									fin == 1 and opcode == 0 ->
+										# Concat data and return
+										acc = <<acc::binary, rest::binary>>
+										# Return the data
+										unmask_data(masking_key, acc)
+									# An unfragmented frame came in
+									fin == 1 and opcode != 0->
+										# Concat data and return
+										acc = <<acc::binary, rest::binary>>
+										unmask_data(masking_key, acc)
 								end
 
 
@@ -389,6 +394,18 @@ defmodule Websocketex do
 
 				{:error, reason} -> {:error, reason}
 			end
+	end
+
+	# Determines which type of control frame is received, if any, and processes them accordingly
+	defp handle_control_frames(opcode, socket) do
+		#ond do
+			#opcode == 0x8 ->
+
+			#opcode == 0x9 ->
+
+			#opcode == 0xA ->
+
+		#end
 	end
 
 	# Unmask the data
@@ -525,7 +542,7 @@ defmodule Websocketex do
 				else
 					false
 				end
-			{:error} - > false
+			{:error} -> false
 		end
 	end
 
