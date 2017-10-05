@@ -53,7 +53,7 @@ defmodule Websocketex do
 				#IO.puts "Opts changed"
 				#Successfull recv() on https request returns
 				# {:ok, [22, 3, 1, 1, 30, 1, 0, 1, 26, 3, 3, 117, 255, 244, 104, 65, 105, 224, 161,
-  			# 117, 108, 129, 192, 121, 22, 210, 130, 2, 83, 253, 1, 196, 247, 142, 195, 168,
+  			# 117, 108, 129, !"192, 121, 22, 210, 130, 2, 83, 253, 1, 196, 247, 142, 195, 168,
   			# 191, 162, 184, 79, 118, 119, 156, 0, 0, 118, 192, 48, 192, ...]}
 
 				# Actual SSL handshake
@@ -97,7 +97,9 @@ defmodule Websocketex do
 		case Websocketex.accept(lSocket) do
 			{:ok, socket} ->
 				#recv_loop(socket, [])
-				Websocketex.recv(socket)
+				message = Websocketex.recv(socket)
+				IO.puts message
+				Websocketex.send(socket, "Server response!")
 				#Websocketex.shutdown(socket, :read_write)
 				#Websocketex.close(socket)
 				#loop_server(lSocket)
@@ -145,15 +147,15 @@ defmodule Websocketex do
 			# If an error occurs receiving
 			{:error, reason} -> {:error, reason}
 			# If there is no matching case
-			:error -> Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
+			:error -> sendTcp(socket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
 			# Other procotol version, must thorw error
-			{:ok, {:http_request, _method, {:abs_path, _path}, {1,0}}} -> Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
+			{:ok, {:http_request, _method, {:abs_path, _path}, {1,0}}} -> sendTcp(socket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
 			# End of Headers
 			{:ok, :http_eoh} -> {:ok, socket, headers}
 			# SSL request on non SSL server socket
 			{:ok, {:http_error, _binary}} ->
 				# Refuse, close connection on client
-				Websocketex.send(socket, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
+				sendTcp(socket, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
 				# Exception
 				{:error, "Protocol error. Cannot connect to non SSL/TLS socket."}
 		end
@@ -161,7 +163,7 @@ defmodule Websocketex do
 
 	defp send_handshake(socket, headers) do
 		if String.to_integer(headers.sec_websocket_version) != @websocket_version do
-			Websocketex.send(socket, "HTTP/1.1 426 Upgrade Required\r\nSec-WebSocket-Version: " <> Integer.to_string(@websocket_version) <> "\r\n\r\n")
+			sendTcp(socket, "HTTP/1.1 426 Upgrade Required\r\nSec-WebSocket-Version: " <> Integer.to_string(@websocket_version) <> "\r\n\r\n")
 		else
 			# Server options the developer set
 			%Websocketex.ServerOptions{extensions: extensions, origins: origins, protocols: protocols} = get_agent()
@@ -172,7 +174,7 @@ defmodule Websocketex do
 					# Concatinate the key in the headers with the accept string,  hash that with SHA-1 and finally base64 encode it.
 					sec_websocket_accept = Base.encode64(:crypto.hash(:sha, headers.sec_websocket_key <> accept_string))
 					# Send handshake
-					Websocketex.send(socket, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "
+					sendTcp(socket, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "
 						<> sec_websocket_accept
 						<> if protocols do "Sec-WebSocket-Protocol: " <> Enum.join(protocols, ",") <> "\r\n" else "" end
 						<> if extensions do "Sec-WebSocket-Extensions: " <> Enum.join(extensions, ",") <> "\r\n" else "" end
@@ -180,7 +182,7 @@ defmodule Websocketex do
 					# After handshake you must change server opts in order to receive data.
 					:inet.setopts(socket, [{:packet, 0}])
 
-				false -> Websocketex.send(socket, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
+				false -> sendTcp(socket, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
 			end
 		end
 
@@ -275,13 +277,13 @@ defmodule Websocketex do
 			{:ok, socket, headers} ->
 				# Check if http headers are valid
 				if !Websocketex.Headers.check_headers(headers) do
-					Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\nConnection: closed\r\n\r\n")
+					sendTcp(socket, "HTTP/1.1 400 Bad Request\r\nConnection: closed\r\n\r\n")
 				end
 				# Try to send the handshake
 				case send_handshake(socket, headers) do
 					:ok -> {:ok, socket}
 					{:error, reason} ->
-						Websocketex.send(socket, "HTTP/1.1 400 Bad Request\r\nConnection: closed\r\n\r\n")
+						sendTcp(socket, "HTTP/1.1 400 Bad Request\r\nConnection: closed\r\n\r\n")
 						{:error, reason}
 				end
 			{:error, reason} -> {:error, reason}
@@ -308,7 +310,7 @@ defmodule Websocketex do
  						# It's an ssl connection
 						{:ok, sslSocket} -> accept_helper(sslSocket)
 						{:error, _reason} ->
-							Websocketex.send(socket, "HTTP/1.1 403 Forbidden\r\nConnection: closed\r\n\r\n")
+							sendTcp(socket, "HTTP/1.1 403 Forbidden\r\nConnection: closed\r\n\r\n")
 							# Send error back up
 							{:error, "SSL/TLS handshake timedout."}
 					end
@@ -322,17 +324,19 @@ defmodule Websocketex do
 
 	# Call for getting the payload data
 	defp handle_frame(packet, socket) do
-		handle_frame(packet, socket, <<>>)
+		# Send -1 opcode which will only be replaced with the actual opcode when a fragmentation occurs
+		handle_frame(packet, socket, <<>>, -1)
 	end
 
 	# Returns the payload data accumulated
-	defp handle_frame(packet, socket, acc) do
+	defp handle_frame(packet, socket, acc, frag_opcode) do
 			case packet do
 				{:ok, frame} ->
 					#IO.puts "Frame IN!"
-					<<fin::size(1), rsv1::size(1), rsv2::size(1), rsv3::size(1), opcode::size(4), mask::size(1), payload_length::size(7)>> = frame
+					<<fin::size(1), _rsv1::size(1), _rsv2::size(1), _rsv3::size(1), opcode::size(4), mask::size(1), payload_length::size(7)>> = frame
 					#IO.puts "First 16 OK!"
 					# If mask is 0, then you must terminate. All client packets must be masked.
+					# In server context only
 					if mask == 0 do
 						clean_closure(socket)
 						# TODO: Send closure frame to client
@@ -359,13 +363,21 @@ defmodule Websocketex do
 							{:ok, rest} ->
 								cond do
 									# Fragmentation starts
+									# Send the opcode in the function call
+									fin == 0 and opcode != 0 ->
+										# Concat the fragmented data
+										acc = <<acc::binary, rest::binary>>
+										# Get the next fragment
+										Websocketex.recv(socket, 2)
+										|>
+										handle_frame(socket, acc, opcode)
 									# Not the last frame and a control frame
 									fin == 0 and opcode >= 0x8 ->
 										handle_control_frames(opcode, socket)
 										# Get the next fragment
 										Websocketex.recv(socket, 2)
 										|>
-										handle_frame(socket, acc)
+										handle_frame(socket, acc, frag_opcode)
 									# Whole bunch of fragmented frames
 									fin == 0 and opcode == 0 ->
 										# Concat the fragmented data
@@ -373,18 +385,25 @@ defmodule Websocketex do
 										# Get the next fragment
 										Websocketex.recv(socket, 2)
 										|>
-										handle_frame(socket, acc)
+										handle_frame(socket, acc, frag_opcode)
 									#The end of fragments. Return data.
 									fin == 1 and opcode == 0 ->
 										# Concat data and return
 										acc = <<acc::binary, rest::binary>>
 										# Return the data
-										unmask_data(masking_key, acc)
+										data = unmask_data(masking_key, acc)
+										# Check if data is valid UTF-8 if it's text
+										validate_data(frag_opcode, data)
 									# An unfragmented frame came in
-									fin == 1 and opcode != 0->
+									fin == 1 and (opcode == 0x1 or opcode == 0x2)->
 										# Concat data and return
 										acc = <<acc::binary, rest::binary>>
-										unmask_data(masking_key, acc)
+										data = unmask_data(masking_key, acc)
+										# Check if data is valid UTF-8 if it's text
+										validate_data(opcode, data)
+									# An unfragmented frame with a control code
+									fin == 1 and opcode >= 0x8 ->
+										handle_control_frames(opcode, socket)
 								end
 
 
@@ -394,6 +413,21 @@ defmodule Websocketex do
 
 				{:error, reason} -> {:error, reason}
 			end
+	end
+
+	# Check if data is valid UTF-8 if it's text
+	defp validate_data(opcode, data) do
+		cond do
+			opcode_is?(opcode, :text) ->
+				# check for valid UTF-8
+				if String.valid?(data) do
+					data
+				else
+					# Not valid UTF-8, send protocl error
+				end
+			opcode_is?(opcode, :binary) ->
+				data
+		end
 	end
 
 	# Determines which type of control frame is received, if any, and processes them accordingly
@@ -479,17 +513,6 @@ defmodule Websocketex do
 		end
 	end
 
-	# Send framed data to the WebSocket server
-
-	#def send(data, type) do
-		#fin = 1
-		#rsvs = 0
-		#opcode = "some_opcode_from_list that uses type"
-		#mask = 0 # Got to check if client or server
-		#payload_len = byte_size(data) * 8 # byte length
-
-	#end
-
 	def shutdown(socket, how) do
 		if Record.is_record(socket, :sslsocket) do
 			:ssl.shutdown(socket, how)
@@ -522,7 +545,13 @@ defmodule Websocketex do
 		end
 	end
 
-	def send(socket, packet) do
+	# Send framed data to the WebSocket server
+	def send(socket, data) do
+		frame = frame_up(data)
+		sendTcp(socket, frame)
+	end
+
+	defp sendTcp(socket, packet) do
 		if Record.is_record(socket, :sslsocket) do
 			:ssl.send(socket, packet)
 		else
@@ -544,6 +573,41 @@ defmodule Websocketex do
 				end
 			{:error} -> false
 		end
+	end
+	# TODO: Handle the creation of multiple frames
+	defp frame_up(data) do
+		IO.puts data
+		binary_data = nil
+		opcode = 0x0
+		mask = 0 # For now, need to implement client or server context
+		payload_length = byte_size(data)
+		if String.valid?(data) do
+			binary_data = data <> <<0>>
+			opcode = 0x1
+		else
+			binary_data = data
+			opcode = 0x2
+		end
+		frame = <<1::size(1), 0::size(1), 0::size(1), 0::size(1), opcode::size(4), mask::size(1), payload_length::size(7)>>
+		IO.puts "Frame set OK!"
+		cond do
+			payload_length <= 125 ->
+				# TODO: Add masking key to frame when client sending data
+				IO.puts "125 OK"
+				frame = <<frame::binary, binary_data::binary>>
+				IO.puts "New frame OK"
+			payload_length == 126 ->
+				# TODO: Add masking key to frame when client sending data
+				IO.puts "126 OK"
+				ext_payload_length = <<126::size(7), last::size(16)>> = payload_length
+				frame = <<frame::binary, ext_payload_length::binary, 0::size(32), binary_data::binary>>
+			payload_length >= 127 ->
+				# TODO: Add masking key to frame when client sending data
+				IO.puts "127 OK"
+				ext_payload_length = <<127::size(7), last::size(64)>> = payload_length
+				frame = <<frame::binary, ext_payload_length::binary, 0::size(32), binary_data::binary>>
+		end
+		frame
 	end
 
 end
