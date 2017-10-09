@@ -5,6 +5,9 @@ defmodule Websocketex do
 	@websocket_version 13
 	@timeout 20
 	@opcodes %{contiunation: 0x0, text: 0x1, binary: 0x2, connection_close: 0x8, ping: 0x9, pong: 0xA}
+	@status_codes %{normal_closure: 1000, going_away: 1001, protocol_error: 1002, invalid_data: 1003, no_code: 1005, abnormal_close: 1006, non_utf8: 1007, policy_violation: 1008, large_message: 1009, missing_extension: 1010, unexpected_condition: 1011, tls_failed: 1015}
+	@frame_max_size_bytes 1500
+	@frame_max_size_bits @frame_max_size_bytes * 8
 
   @moduledoc """
   Documentation for Websocketex.
@@ -99,7 +102,8 @@ defmodule Websocketex do
 				#recv_loop(socket, [])
 				message = Websocketex.recv(socket)
 				IO.puts message
-				Websocketex.send(socket, "Server response!")
+				Websocketex.send(socket, "Server response 1!", :text)
+				Websocketex.send(socket, "Server response 2!", :text)
 				#Websocketex.shutdown(socket, :read_write)
 				#Websocketex.close(socket)
 				#loop_server(lSocket)
@@ -122,7 +126,7 @@ defmodule Websocketex do
 				IO.puts mask
 				IO.puts payload_length
 				#recv_loop(socket, Enum.concat(data, :binary.bin_to_list(bin)))
-			{:error, reason} -> Enum.to_list(data)
+			{:error, _reason} -> Enum.to_list(data)
 		end
 	end
 
@@ -373,7 +377,8 @@ defmodule Websocketex do
 										handle_frame(socket, acc, opcode)
 									# Not the last frame and a control frame
 									fin == 0 and opcode >= 0x8 ->
-										handle_control_frames(opcode, socket)
+										data = unmask_data(masking_key, rest)
+										handle_control_frames(opcode, socket, data)
 										# Get the next fragment
 										Websocketex.recv(socket, 2)
 										|>
@@ -393,17 +398,18 @@ defmodule Websocketex do
 										# Return the data
 										data = unmask_data(masking_key, acc)
 										# Check if data is valid UTF-8 if it's text
-										validate_data(frag_opcode, data)
+										validate_data(frag_opcode, data, socket)
 									# An unfragmented frame came in
 									fin == 1 and (opcode == 0x1 or opcode == 0x2)->
 										# Concat data and return
 										acc = <<acc::binary, rest::binary>>
 										data = unmask_data(masking_key, acc)
 										# Check if data is valid UTF-8 if it's text
-										validate_data(opcode, data)
+										validate_data(opcode, data, socket)
 									# An unfragmented frame with a control code
 									fin == 1 and opcode >= 0x8 ->
-										handle_control_frames(opcode, socket)
+										data = unmask_data(masking_key, acc)
+										handle_control_frames(opcode, socket, data)
 								end
 
 
@@ -416,7 +422,7 @@ defmodule Websocketex do
 	end
 
 	# Check if data is valid UTF-8 if it's text
-	defp validate_data(opcode, data) do
+	defp validate_data(opcode, data, socket) do
 		cond do
 			opcode_is?(opcode, :text) ->
 				# check for valid UTF-8
@@ -424,6 +430,8 @@ defmodule Websocketex do
 					data
 				else
 					# Not valid UTF-8, send protocl error
+					status_code = Integer.to_string(get_status_code(:protocol_error))
+					Websocketex.send(socket, status_code, opcode)
 				end
 			opcode_is?(opcode, :binary) ->
 				data
@@ -431,15 +439,18 @@ defmodule Websocketex do
 	end
 
 	# Determines which type of control frame is received, if any, and processes them accordingly
-	defp handle_control_frames(opcode, socket) do
-		#ond do
-			#opcode == 0x8 ->
-
-			#opcode == 0x9 ->
-
-			#opcode == 0xA ->
-
-		#end
+	defp handle_control_frames(opcode, socket, data) do
+		cond do
+			opcode_is?(opcode, :close) ->
+				status_code = Integer.to_string(get_status_code(:policy_violation))
+				Websocketex.send(socket, status_code, opcode)
+			# Ping, send pong
+			opcode_is?(opcode, :ping) ->
+				Websocketex.send(socket, data, opcode)
+			# Pong, do nothing
+			opcode_is?(opcode, :pong) ->
+				true
+		end
 	end
 
 	# Unmask the data
@@ -456,7 +467,7 @@ defmodule Websocketex do
 			#IO.puts "Size greater than 32"
 			<<datagram::size(32), rest_data::binary >>  = data
 			#IO.puts "Datagram > 32"
-			<<keygram::size(32), rest_key::binary>> = masking_key
+			<<keygram::size(32), _rest_key::binary>> = masking_key
 			key = keygram
 			#IO.puts "Got Keygram > 32"
 			unmask_data(masking_key, rest_data, <<acc::binary, Bitwise.bxor(key, datagram)::size(32)>>)
@@ -465,7 +476,7 @@ defmodule Websocketex do
 					#IO.puts "Size less than 32"
 					<<datagram::size(data_size), rest_data::binary >>  = data
 					#IO.puts "Datagram < 32"
-					<<keygram::size(data_size), rest_key::binary>> = masking_key
+					<<keygram::size(data_size), _rest_key::binary>> = masking_key
 					key = keygram
 					#IO.puts "Got Keygram < 32"
 					unmask_data(masking_key, rest_data, <<acc::binary, Bitwise.bxor(key, datagram)::size(data_size)>>)
@@ -546,9 +557,17 @@ defmodule Websocketex do
 	end
 
 	# Send framed data to the WebSocket server
-	def send(socket, data) do
-		frame = frame_up(data)
-		sendTcp(socket, frame)
+	def send(socket, data, opcode) do
+		data_size = byte_size(data)
+		if data_size <= @frame_max_size_bytes do
+			frame = frame_up(data, opcode, 1)
+			sendTcp(socket, frame)
+		else
+			<<datagram::size(@frame_max_size_bits), rest::binary>> = data
+			# frame_up(data, opcode_type, fin bit)
+			frame = frame_up(datagram, :contiunation, 0)
+			send(socket, rest, 0)
+		end
 	end
 
 	defp sendTcp(socket, packet) do
@@ -574,37 +593,49 @@ defmodule Websocketex do
 			{:error} -> false
 		end
 	end
+
+	defp get_opcode(type) do
+		case Map.fetch(@opcodes, type) do
+			{:ok, value} -> value
+			:error -> :error
+		end
+	end
+
+	defp get_status_code(type) do
+		case Map.fetch(@status_codes, type) do
+			{:ok, value} -> value
+			:error -> :error
+		end
+	end
+
 	# TODO: Handle the creation of multiple frames
-	defp frame_up(data) do
-		IO.puts data
-		binary_data = nil
-		opcode = 0x0
+	defp frame_up(data, opcode_type, fin) do
+		#IO.puts data
+		opcode = nil
 		mask = 0 # For now, need to implement client or server context
 		payload_length = byte_size(data)
-		if String.valid?(data) do
-			binary_data = data <> <<0>>
-			opcode = 0x1
-		else
-			binary_data = data
-			opcode = 0x2
+		binary_data = data
+		case get_opcode(opcode_type) do
+			value -> opcode = value
+			:error -> raise "Protocol error. Invalid opcode."
 		end
-		frame = <<1::size(1), 0::size(1), 0::size(1), 0::size(1), opcode::size(4), mask::size(1), payload_length::size(7)>>
-		IO.puts "Frame set OK!"
+		frame = <<fin::size(1), 0::size(3), opcode::size(4), mask::size(1), payload_length::size(7)>>
+		#IO.puts "Frame set OK!"
 		cond do
 			payload_length <= 125 ->
 				# TODO: Add masking key to frame when client sending data
-				IO.puts "125 OK"
+				#IO.puts "125 OK"
 				frame = <<frame::binary, binary_data::binary>>
-				IO.puts "New frame OK"
+				#IO.puts "New frame OK"
 			payload_length == 126 ->
 				# TODO: Add masking key to frame when client sending data
-				IO.puts "126 OK"
-				ext_payload_length = <<126::size(7), last::size(16)>> = payload_length
+				#IO.puts "126 OK"
+				ext_payload_length = <<126::size(7), _last::size(16)>> = payload_length
 				frame = <<frame::binary, ext_payload_length::binary, 0::size(32), binary_data::binary>>
 			payload_length >= 127 ->
 				# TODO: Add masking key to frame when client sending data
-				IO.puts "127 OK"
-				ext_payload_length = <<127::size(7), last::size(64)>> = payload_length
+				#IO.puts "127 OK"
+				ext_payload_length = <<127::size(7), _last::size(64)>> = payload_length
 				frame = <<frame::binary, ext_payload_length::binary, 0::size(32), binary_data::binary>>
 		end
 		frame
