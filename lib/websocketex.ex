@@ -564,8 +564,14 @@ defmodule Websocketex do
 			sendTcp(socket, frame)
 		else
 			<<datagram::size(@frame_max_size_bits), rest::binary>> = data
-			# frame_up(data, opcode_type, fin bit)
-			frame = frame_up(datagram, :contiunation, 0)
+			opcode_value = get_opcode(opcode)
+			if opcode_is?(opcode_value, :contiunation) do
+				# frame_up(data, opcode_type, fin bit)
+				frame = frame_up(datagram, :contiunation, 0)
+			else
+				# Fragmentation starting
+				frame = frame_up(datagram, opcode, 0)
+			end
 			send(socket, rest, 0)
 		end
 	end
