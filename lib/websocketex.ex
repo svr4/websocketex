@@ -430,8 +430,12 @@ defmodule Websocketex do
 					data
 				else
 					# Not valid UTF-8, send protocl error
-					status_code = Integer.to_string(get_status_code(:protocol_error))
-					Websocketex.send(socket, status_code, opcode)
+					case get_status_code(:protocol_error) do
+						{:ok, protocol_error} ->
+							status_code = Integer.to_string()
+							Websocketex.send(socket, status_code, opcode)
+						:error -> "Protocol error. Invalid status code."
+					end
 				end
 			opcode_is?(opcode, :binary) ->
 				data
@@ -442,8 +446,12 @@ defmodule Websocketex do
 	defp handle_control_frames(opcode, socket, data) do
 		cond do
 			opcode_is?(opcode, :close) ->
-				status_code = Integer.to_string(get_status_code(:policy_violation))
-				Websocketex.send(socket, status_code, opcode)
+				case get_status_code(:policy_violation) do
+					{:ok, code} ->
+						status_code = Integer.to_string(code)
+						Websocketex.send(socket, status_code, opcode)
+					:error -> raise "Protocol error. Invalid status code."
+				end
 			# Ping, send pong
 			opcode_is?(opcode, :ping) ->
 				Websocketex.send(socket, data, opcode)
@@ -564,15 +572,18 @@ defmodule Websocketex do
 			sendTcp(socket, frame)
 		else
 			<<datagram::size(@frame_max_size_bits), rest::binary>> = data
-			opcode_value = get_opcode(opcode)
-			if opcode_is?(opcode_value, :contiunation) do
-				# frame_up(data, opcode_type, fin bit)
-				frame = frame_up(datagram, :contiunation, 0)
-			else
-				# Fragmentation starting
-				frame = frame_up(datagram, opcode, 0)
+			case get_opcode(opcode) do
+				{:ok, opcode_value} ->
+					if opcode_is?(opcode_value, :contiunation) do
+						# frame_up(data, opcode_type, fin bit)
+						frame = frame_up(datagram, :contiunation, 0)
+					else
+						# Fragmentation starting
+						frame = frame_up(datagram, opcode, 0)
+					end
+					send(socket, rest, 0)
+				:error -> raise "Protocol error. Invalid opcode."
 			end
-			send(socket, rest, 0)
 		end
 	end
 
@@ -601,17 +612,11 @@ defmodule Websocketex do
 	end
 
 	defp get_opcode(type) do
-		case Map.fetch(@opcodes, type) do
-			{:ok, value} -> value
-			:error -> :error
-		end
+		Map.fetch(@opcodes, type)
 	end
 
 	defp get_status_code(type) do
-		case Map.fetch(@status_codes, type) do
-			{:ok, value} -> value
-			:error -> :error
-		end
+		Map.fetch(@status_codes, type)
 	end
 
 	# TODO: Handle the creation of multiple frames
@@ -622,29 +627,30 @@ defmodule Websocketex do
 		payload_length = byte_size(data)
 		binary_data = data
 		case get_opcode(opcode_type) do
-			value -> opcode = value
+			{:ok, value} ->
+				opcode = value
+				frame = <<fin::size(1), 0::size(3), opcode::size(4), mask::size(1), payload_length::size(7)>>
+				#IO.puts "Frame set OK!"
+				cond do
+					payload_length <= 125 ->
+						# TODO: Add masking key to frame when client sending data
+						#IO.puts "125 OK"
+						frame = <<frame::binary, binary_data::binary>>
+						#IO.puts "New frame OK"
+					payload_length == 126 ->
+						# TODO: Addtext masking key to frame when client sending data
+						#IO.puts "126 OK"
+						ext_payload_length = <<126::size(7), _last::size(16)>> = payload_length
+						frame = <<frame::binary, ext_payload_length::binary, 0::size(32), binary_data::binary>>
+					payload_length >= 127 ->
+						# TODO: Add masking key to frame when client sending data
+						#IO.puts "127 OK"
+						ext_payload_length = <<127::size(7), _last::size(64)>> = payload_length
+						frame = <<frame::binary, ext_payload_length::binary, 0::size(32), binary_data::binary>>
+				end
+				frame
 			:error -> raise "Protocol error. Invalid opcode."
 		end
-		frame = <<fin::size(1), 0::size(3), opcode::size(4), mask::size(1), payload_length::size(7)>>
-		#IO.puts "Frame set OK!"
-		cond do
-			payload_length <= 125 ->
-				# TODO: Add masking key to frame when client sending data
-				#IO.puts "125 OK"
-				frame = <<frame::binary, binary_data::binary>>
-				#IO.puts "New frame OK"
-			payload_length == 126 ->
-				# TODO: Add masking key to frame when client sending data
-				#IO.puts "126 OK"
-				ext_payload_length = <<126::size(7), _last::size(16)>> = payload_length
-				frame = <<frame::binary, ext_payload_length::binary, 0::size(32), binary_data::binary>>
-			payload_length >= 127 ->
-				# TODO: Add masking key to frame when client sending data
-				#IO.puts "127 OK"
-				ext_payload_length = <<127::size(7), _last::size(64)>> = payload_length
-				frame = <<frame::binary, ext_payload_length::binary, 0::size(32), binary_data::binary>>
-		end
-		frame
 	end
 
 end
