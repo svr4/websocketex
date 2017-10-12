@@ -211,16 +211,16 @@ defmodule Websocketex do
 		end
 	end
 
-	defp start_agent(server_options) do
+	defp start_agent(options) do
 
 		pid = Process.whereis(__MODULE__)
 
 		if pid == nil do
-			Agent.start_link(fn -> server_options end, name: __MODULE__)
+			Agent.start_link(fn -> options end, name: __MODULE__)
 		else
 			if Process.alive?(pid) do
 				stop_agent()
-				Agent.start_link(fn -> server_options end, name: __MODULE__)
+				Agent.start_link(fn -> options end, name: __MODULE__)
 			end
 		end
 
@@ -238,7 +238,11 @@ defmodule Websocketex do
 		Agent.stop(__MODULE__, :normal)
 	end
 
-	def close(socket) do
+	def close(websocket) do
+		clean_closure(websocket)
+	end
+
+	defp closeTcp(socket) do
 		if Record.is_record(socket, :sslsocket) do
 			:ssl.close(socket)
 		else
@@ -341,81 +345,87 @@ defmodule Websocketex do
 					#IO.puts "First 16 OK!"
 					# If mask is 0, then you must terminate. All client packets must be masked.
 					# In server context only
-					if mask == 0 do
-						clean_closure(socket)
-						# TODO: Send closure frame to client
+					if mask == 0 and is_context?(:server) do
+						Websocketex.send(socket, Integer.to_string(get_status_code(:protocol_error)), :connection_close)
+						Websocketex.close(socket)
 					else
-						#IO.puts "Has a mask! OK!"
-						payload_data_length = check_payload_length(payload_length, socket)
-						# Check if the frame has a mask
-						masking_key = cond do
-							mask == 1 ->
-								# Get the next 4 byes of the masking key
-								case Websocketex.recv(socket, 4) do
-									{:ok, masking_key} ->
-										#IO.puts "Masking key OK!"
-										masking_key
-								end
-							mask == 0 ->
-								0
-						end
-						#IO.puts "handle_frame OK!"
-						#IO.puts "Payload Data Lenght: " <> Integer.to_string(payload_data_length)
-						#IO.puts "Masing key: " <> Enum.join(:erlang.binary_to_list(masking_key))
-						# Now get the data in the frame
-						case Websocketex.recv(socket, payload_data_length) do
-							{:ok, rest} ->
-								cond do
-									# Fragmentation starts
-									# Send the opcode in the function call
-									fin == 0 and opcode != 0 ->
-										# Concat the fragmented data
-										acc = <<acc::binary, rest::binary>>
-										# Get the next fragment
-										Websocketex.recv(socket, 2)
-										|>
-										handle_frame(socket, acc, opcode)
-									# Not the last frame and a control frame
-									fin == 0 and opcode >= 0x8 ->
-										data = unmask_data(masking_key, rest)
-										handle_control_frames(opcode, socket, data)
-										# Get the next fragment
-										Websocketex.recv(socket, 2)
-										|>
-										handle_frame(socket, acc, frag_opcode)
-									# Whole bunch of fragmented frames
-									fin == 0 and opcode == 0 ->
-										# Concat the fragmented data
-										acc = <<acc::binary, rest::binary>>
-										# Get the next fragment
-										Websocketex.recv(socket, 2)
-										|>
-										handle_frame(socket, acc, frag_opcode)
-									#The end of fragments. Return data.
-									fin == 1 and opcode == 0 ->
-										# Concat data and return
-										acc = <<acc::binary, rest::binary>>
-										# Return the data
-										data = unmask_data(masking_key, acc)
-										# Check if data is valid UTF-8 if it's text
-										validate_data(frag_opcode, data, socket)
-									# An unfragmented frame came in
-									fin == 1 and (opcode == 0x1 or opcode == 0x2)->
-										# Concat data and return
-										acc = <<acc::binary, rest::binary>>
-										data = unmask_data(masking_key, acc)
-										# Check if data is valid UTF-8 if it's text
-										validate_data(opcode, data, socket)
-									# An unfragmented frame with a control code
-									fin == 1 and opcode >= 0x8 ->
-										data = unmask_data(masking_key, acc)
-										handle_control_frames(opcode, socket, data)
-								end
+
+						if mask == 1 and is_context?(:client) do
+							Websocketex.send(socket, Integer.to_string(get_status_code(:protocol_error)), :connection_close)
+							Websocketex.close(socket)
+						else
+							#IO.puts "Has a mask! OK!"
+							payload_data_length = check_payload_length(payload_length, socket)
+							# Check if the frame has a mask
+							masking_key = cond do
+								mask == 1 ->
+									# Get the next 4 byes of the masking key
+									case Websocketex.recv(socket, 4) do
+										{:ok, masking_key} ->
+											#IO.puts "Masking key OK!"
+											masking_key
+									end
+								mask == 0 ->
+									0
+							end
+							#IO.puts "handle_frame OK!"
+							#IO.puts "Payload Data Lenght: " <> Integer.to_string(payload_data_length)
+							#IO.puts "Masing key: " <> Enum.join(:erlang.binary_to_list(masking_key))
+							# Now get the data in the frame
+							case Websocketex.recv(socket, payload_data_length) do
+								{:ok, rest} ->
+									cond do
+										# Fragmentation starts
+										# Send the opcode in the function call
+										fin == 0 and opcode != 0 ->
+											# Concat the fragmented data
+											acc = <<acc::binary, rest::binary>>
+											# Get the next fragment
+											Websocketex.recv(socket, 2)
+											|>
+											handle_frame(socket, acc, opcode)
+										# Not the last frame and a control frame
+										fin == 0 and opcode >= 0x8 ->
+											data = unmask_data(masking_key, rest)
+											handle_control_frames(opcode, socket, data)
+											# Get the next fragment
+											Websocketex.recv(socket, 2)
+											|>
+											handle_frame(socket, acc, frag_opcode)
+										# Whole bunch of fragmented frames
+										fin == 0 and opcode == 0 ->
+											# Concat the fragmented data
+											acc = <<acc::binary, rest::binary>>
+											# Get the next fragment
+											Websocketex.recv(socket, 2)
+											|>
+											handle_frame(socket, acc, frag_opcode)
+										#The end of fragments. Return data.
+										fin == 1 and opcode == 0 ->
+											# Concat data and return
+											acc = <<acc::binary, rest::binary>>
+											# Return the data
+											data = unmask_data(masking_key, acc)
+											# Check if data is valid UTF-8 if it's text
+											validate_data(frag_opcode, data, socket)
+										# An unfragmented frame came in
+										fin == 1 and (opcode == 0x1 or opcode == 0x2)->
+											# Concat data and return
+											acc = <<acc::binary, rest::binary>>
+											data = unmask_data(masking_key, acc)
+											# Check if data is valid UTF-8 if it's text
+											validate_data(opcode, data, socket)
+										# An unfragmented frame with a control code
+										fin == 1 and opcode >= 0x8 ->
+											data = unmask_data(masking_key, acc)
+											handle_control_frames(opcode, socket, data)
+									end
 
 
-							{:error, reason} -> {:error, reason}
-						end
-					end
+								{:error, reason} -> {:error, reason}
+							end # End of case recv
+						end # else > else
+					end #end of masking validation
 
 				{:error, reason} -> {:error, reason}
 			end
@@ -432,7 +442,7 @@ defmodule Websocketex do
 					# Not valid UTF-8, send protocl error
 					case get_status_code(:protocol_error) do
 						{:ok, protocol_error} ->
-							status_code = Integer.to_string()
+							status_code = Integer.to_string(protocol_error)
 							Websocketex.send(socket, status_code, opcode)
 						:error -> "Protocol error. Invalid status code."
 					end
@@ -527,7 +537,7 @@ defmodule Websocketex do
 	defp clean_closure(socket) do
 		Websocketex.shutdown(socket, :read_write)
 		case Websocketex.recv(socket, 0) do
-			{:ok, 0} -> Websocketex.close(socket)
+			{:ok, 0} -> Websocketex.closeTcp(socket)
 			{:error, reason} -> {:error, reason}
 		end
 	end
@@ -540,12 +550,64 @@ defmodule Websocketex do
 		end
 	end
 
-	def connect(address, port, options) do
-		:gen_tcp.connect(address, port, options)
+	def connect(protocol, address, port) do
+		connect(protocol, address, port, %Websocketex.ClientOptions{})
 	end
 
-	def connect(address, port, options, timeout) do
-		:gen_tcp.connect(address, port, options, timeout)
+	def connect(protocol, address, port, path \\ "", options \\ %Websocketex.ClientOptions{}) do
+		IO.puts "I entered"
+		connectTcp(protocol, address, port, path, options)
+	end
+
+	# TODO: Send Upgrade WebSockets HTTP request
+	# TODO: Copy to other connectTcp function
+	defp connectTcp(protocol, address, port, path, options) do
+		cond do
+			protocol == :ws ->
+				case :gen_tcp.connect(address, port, [:binary, {:packet, 0}]) do
+					{:ok, socket} ->
+						IO.puts "OK socket!"
+						options = %Websocketex.ClientOptions{options | path: path}
+						start_agent(options)
+						{:ok, socket}
+					{:error, reason} -> {:error, reason}
+				end
+			protocol == :wss ->
+				:ssl.start()
+				case :ssl.connect(address, port, []) do
+					{:ok, sslSocket} ->
+						options = %Websocketex.ClientOptions{options | path: path, ssl: true}
+						start_agent(options)
+						{:ok, sslSocket}
+					{:error, reason} -> {:error, reason}
+				end
+			true ->
+				raise "Error unsoported protocol."
+		end
+	end
+
+	defp connectTcp(protocol, address, port, path, options, timeout) do
+		cond do
+			protocol == "ws" ->
+				case :gen_tcp.connect(address, port, [:binary, {:packet, 0}], timeout) do
+					{:ok, socket} ->
+						options = %Websocketex.ClientOptions{options | path: path}
+						start_agent(options)
+						{:ok, socket}
+					{:error, reason} -> {:error, reason}
+				end
+			protocol == "wss" ->
+				:ssl.start()
+				case :ssl.connect(address, port, [], timeout) do
+					{:ok, sslSocket} ->
+						options = %Websocketex.ClientOptions{options | path: path, ssl: true}
+						start_agent(options)
+						{:ok, sslSocket}
+					{:error, reason} -> {:error, reason}
+				end
+			true ->
+				raise "Error unsoported protocol."
+		end
 	end
 
 	def recv(socket, length) do
@@ -619,7 +681,16 @@ defmodule Websocketex do
 		Map.fetch(@status_codes, type)
 	end
 
-	# TODO: Handle the creation of multiple frames
+	defp is_context?(type) do
+		current_options = get_agent()
+		cond do
+			type == :client ->
+				Record.is_record(current_options, Websocketex.ClientOptions)
+			type == :server ->
+				Record.is_record(current_options, Websocketex.ServerOptions)
+		end
+	end
+
 	defp frame_up(data, opcode_type, fin) do
 		#IO.puts data
 		opcode = nil
