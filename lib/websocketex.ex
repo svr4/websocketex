@@ -842,7 +842,6 @@ defmodule Websocketex do
 		binary_data = data
 		if is_context?(:client) do
 			# call masking function
-			IO.puts "Client context"
 			masking_key = :crypto.strong_rand_bytes(4)
 			binary_data = mask_data(masking_key, binary_data)
 		end
