@@ -97,7 +97,7 @@ defmodule Websocketex do
 	end
 
 	def client do
-		 case Websocketex.connect(:ws, 'localhost', 5678) do
+		 case Websocketex.connect(:ws, '192.168.1.66', 5678) do
 		 		{:ok, websocket} ->
 					Websocketex.send(websocket, "Hello", :text)
 					IO.puts "Sent: Hello"
@@ -274,7 +274,10 @@ defmodule Websocketex do
 	defp clean_closure(socket) do
 		shutdown(socket, :read_write)
 		case recvTcp(socket, 0) do
+			# Server close response
 			{:ok, 0} -> closeTcp(socket)
+			# Client closed, which SHOULD NOT happen, thus returns a status code to unframe
+			{:ok, data} -> handle_frame(data, socket, <<>>, -1)
 			{:error, reason} -> {:error, reason}
 		end
 	end
@@ -496,11 +499,10 @@ defmodule Websocketex do
 	# Determines which type of control frame is received, if any, and processes them accordingly
 	defp handle_control_frames(opcode, socket, data) do
 		cond do
-			opcode_is?(opcode, :close) ->
+			opcode_is?(opcode, :connection_close) ->
 				case get_status_code(:policy_violation) do
 					{:ok, code} ->
-						status_code = Integer.to_string(code)
-						Websocketex.send(socket, status_code, opcode)
+						Websocketex.send(socket, code, opcode)
 					:error -> raise "Protocol error. Invalid status code."
 				end
 			# Ping, send pong
@@ -520,11 +522,19 @@ defmodule Websocketex do
 	# Reads data in 32 bit chunks, to take advantage of the key's size, until the data left is less than 32 bits. Then it uses the data bit size to XOR with the key.
 	defp unmask_data(masking_key, data, acc) do
 		#IO.puts "unmask in"
-		data_size = bit_size(data) # Data size in bits
+		if is_integer(data) do
+			data_size = bit_size(:binary.encode_unsigned(data)) # Data size in bits
+		else
+			data_size = bit_size(data) # Data size in bits
+		end
 		#IO.puts "data size: " <> Integer.to_string(data_size)
 		if data_size >= 32 do # If the remaining data is > 32
 			#IO.puts "Size greater than 32"
-			<<datagram::size(32), rest_data::binary >>  = data
+			if is_integer(data) do
+				<<datagram::size(32)>> = data
+			else
+				<<datagram::size(32), rest_data::binary >>  = data
+			end
 			#IO.puts "Datagram > 32"
 			<<keygram::size(32), _rest_key::binary>> = masking_key
 			key = keygram
@@ -533,7 +543,11 @@ defmodule Websocketex do
 		else
 				if data_size > 0 do
 					#IO.puts "Size less than 32"
-					<<datagram::size(data_size), rest_data::binary >>  = data
+					if is_integer(data) do
+						<<datagram::size(data_size), rest_data::binary>>  = :binary.encode_unsigned(data)
+					else
+						<<datagram::size(data_size), rest_data::binary >>  = data
+					end
 					#IO.puts "Datagram < 32"
 					<<keygram::size(data_size), _rest_key::binary>> = masking_key
 					key = keygram
@@ -803,9 +817,9 @@ defmodule Websocketex do
 		current_options = get_agent()
 		cond do
 			type == :client ->
-				Record.is_record(current_options, Websocketex.ClientOptions)
+				current_options.__struct__ == Websocketex.ClientOptions
 			type == :server ->
-				Record.is_record(current_options, Websocketex.ServerOptions)
+				current_options.__struct__ == Websocketex.ServerOptions
 		end
 	end
 	# TODO: Handle client masking
@@ -817,20 +831,16 @@ defmodule Websocketex do
 		else # Server context
 			mask = 0
 		end
+		# Get bytes depending if binary or integer
 		if is_integer(data) do
 			payload_length = byte_size(:binary.encode_unsigned(data))
 		else
 			payload_length = byte_size(data)
 		end
-		#payload_length = byte_size(data)
-		#if is_integer(data) do
-			#binary_data = :binary.encode_unsigned(data)
-		#else
-			#binary_data = data
-		#end
 		binary_data = data
 		if is_context?(:client) do
 			# call masking function
+			IO.puts "Client context"
 			masking_key = :crypto.strong_rand_bytes(4)
 			binary_data = mask_data(masking_key, binary_data)
 		end
@@ -854,11 +864,15 @@ defmodule Websocketex do
 				end
 				# Attach masking key or not
 				if is_context?(:client) do
-					frame = <<frame::binary, masking_key::size(32)>>
+					frame = <<frame::binary, masking_key::binary>>
 				end
 				cond do
 					opcode_is?(opcode, :connection_close) ->
-						frame = <<frame::binary, binary_data::size(16)>>
+						if is_context?(:client) do
+							frame = <<frame::binary, binary_data::binary>>
+						else
+							frame = <<frame::binary, binary_data::size(16)>>
+						end
 					opcode_is?(opcode, :ping) ->
 						frame = <<frame::binary, binary_data::binary>>
 					opcode_is?(opcode, :pong) ->
