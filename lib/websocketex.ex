@@ -114,10 +114,10 @@ defmodule Websocketex do
 			{:ok, socket} ->
 				IO.puts "Connection received!"
 				#recv_loop(socket, [])
-				#message = Websocketex.recv(socket)
+				message = Websocketex.recv(socket)
 				#IO.puts message
 				Websocketex.send(socket, "echo", :text)
-				Websocketex.send(socket, "echo2", :text)
+				#Websocketex.send(socket, "echo2", :text)
 				#Websocketex.send(socket, "Server response 2!", :text)
 				#Websocketex.shutdown(socket, :read_write)
 				Websocketex.close(socket)
@@ -273,11 +273,14 @@ defmodule Websocketex do
 
 	defp clean_closure(socket) do
 		shutdown(socket, :read_write)
-		case recvTcp(socket, 0) do
+		case recvTcp(socket, 2) do
 			# Server close response
 			{:ok, 0} -> closeTcp(socket)
 			# Client closed, which SHOULD NOT happen, thus returns a status code to unframe
-			{:ok, data} -> handle_frame(data, socket, <<>>, -1)
+			{:ok, <<data::binary>>} ->
+				data = handle_frame({:ok, data}, socket)
+				closeTcp(socket)
+				data
 			{:error, reason} -> {:error, reason}
 		end
 	end
@@ -486,8 +489,7 @@ defmodule Websocketex do
 					# Not valid UTF-8, send protocl error
 					case get_status_code(:protocol_error) do
 						{:ok, protocol_error} ->
-							status_code = Integer.to_string(protocol_error)
-							Websocketex.send(socket, status_code, opcode)
+							Websocketex.send(socket, protocol_error, opcode)
 						:error -> "Protocol error. Invalid status code."
 					end
 				end
@@ -507,7 +509,7 @@ defmodule Websocketex do
 				end
 			# Ping, send pong
 			opcode_is?(opcode, :ping) ->
-				Websocketex.send(socket, data, opcode)
+				Websocketex.send(socket, data, :pong)
 			# Pong, do nothing
 			opcode_is?(opcode, :pong) ->
 				true
