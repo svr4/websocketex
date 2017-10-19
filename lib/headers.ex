@@ -1,7 +1,7 @@
 defmodule Websocketex.Headers do
 	# Required: host, upgrade, connection, sec_websocket_key, sec_websocket_version
 	# Optional: origin, sec_websocket_protocol, sec_websocket_extensions
-	defstruct host: nil, upgrade: nil, connection: nil, sec_websocket_key: nil, rest_of_headers: nil, sec_websocket_version: nil, origin: nil, sec_websocket_accept: nil, sec_websocket_protocol: nil, sec_websocket_extensions: nil
+	defstruct host: nil, upgrade: nil, connection: nil, sec_websocket_key: nil, rest_of_headers: [], path: nil, query: nil, sec_websocket_version: nil, origin: nil, sec_websocket_accept: nil, sec_websocket_protocol: nil, sec_websocket_extensions: nil
 
 
 	def check_server_headers(headers) do

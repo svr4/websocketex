@@ -8,6 +8,7 @@ defmodule Websocketex do
 	@status_codes %{normal_closure: 1000, going_away: 1001, protocol_error: 1002, invalid_data: 1003, no_code: 1005, abnormal_close: 1006, non_utf8: 1007, policy_violation: 1008, large_message: 1009, missing_extension: 1010, unexpected_condition: 1011, tls_failed: 1015}
 	@frame_max_size_bytes 1500
 	@frame_max_size_bits @frame_max_size_bytes * 8
+	@message_max_byte_size 256000 # 256KB
 	@pending_connections 10
 
   @moduledoc """
@@ -148,7 +149,7 @@ defmodule Websocketex do
 	defp process_request(socket, headers) do
 		case recvTcp(socket, 0) do
 			# Get protocol, method and uri
-			{:ok, {:http_request, :GET, {:abs_path, _path}, {1,1}}} ->  process_request(socket, headers)
+			{:ok, {:http_request, :GET, {path, query}, {1,1}}} ->  process_request(socket, %Websocketex.Headers{headers | path: path, query: query})
 			# Process headers
 			# Required websocket headers
 			# Example: {:ok, {:http_header, 24, :"User-Agent", :undefined, "curl/7.35.0"}}
@@ -161,8 +162,11 @@ defmodule Websocketex do
 			{:ok, {:http_header, _size, "Origin", _otherfield, origin}} -> process_request(socket, %Websocketex.Headers{headers | origin: origin})
 			{:ok, {:http_header, _size, "Sec-Websocket-Protocol", _otherfield, protocol}} -> process_request(socket, %Websocketex.Headers{headers | sec_websocket_protocol: protocol})
 			{:ok, {:http_header, _size, "Sec-Websocket-Extensions", _otherfield, extensions}} -> process_request(socket, %Websocketex.Headers{headers | sec_websocket_extensions: extensions})
-			# Ignore any other headers
-			{:ok, {:http_header, _size, _header_field, _otherfield, _value}} -> process_request(socket, headers)
+			# Other headers
+			{:ok, {:http_header, _size, header_field, _otherfield, value}} ->
+				%Websocketex.Headers{rest_of_headers: rest_of_headers} = headers
+				new_rest = rest_of_headers ++ [{header_field, value}]
+				process_request(socket, %Websocketex.Headers{headers | rest_of_headers: new_rest})
 			# If an error occurs receiving
 			{:error, reason} -> {:error, reason}
 			# If there is no matching case
@@ -266,7 +270,7 @@ defmodule Websocketex do
 	end
 
 	defp close(socket, status_code_type) do
-		{:ok, code} = get_status_code(:status_code_type)
+		{:ok, code} = get_status_code(status_code_type)
 		Websocketex.send(socket, code, :connection_close)
 		clean_closure(socket)
 	end
@@ -406,6 +410,9 @@ defmodule Websocketex do
 							case recvTcp(socket, payload_data_length) do
 								{:ok, rest} ->
 									cond do
+										# Close connection, message to large
+										bit_size(rest) > @message_max_byte_size ->
+											close(socket, :large_message)
 										# Fragmentation starts
 										# Send the opcode in the function call
 										fin == 0 and opcode != 0 ->
@@ -487,11 +494,7 @@ defmodule Websocketex do
 					data
 				else
 					# Not valid UTF-8, send protocl error
-					case get_status_code(:protocol_error) do
-						{:ok, protocol_error} ->
-							Websocketex.send(socket, protocol_error, opcode)
-						:error -> "Protocol error. Invalid status code."
-					end
+					close(socket, :non_utf8)
 				end
 			opcode_is?(opcode, :binary) ->
 				data
@@ -602,20 +605,31 @@ defmodule Websocketex do
 		end
 	end
 
-	def connect(protocol, address, port) do
-		connect(protocol, address, port, %Websocketex.ClientOptions{})
+	def connect(protocol, address) do
+		connect(protocol, address, %Websocketex.ClientOptions{})
 	end
 
-	def connect(protocol, address, port, path \\ "", options \\ %Websocketex.ClientOptions{}, timeout \\ :infinity) do
-		connectTcp(protocol, address, port, path, options, timeout)
+	def connect(protocol, address, port \\ 0, path \\ "", query \\ "", options \\ %Websocketex.ClientOptions{}, timeout \\ :infinity) do
+		connectTcp(protocol, address, port, path, query, options, timeout)
 	end
 
 	# TODO: Serialize multiple connect's, there can only be one CONNECTING at a time
 	# TODO: _Fail Websocket Connection_
 	# TODO: Abort
-	defp connectTcp(protocol, address, port, path, options, timeout) do
+	defp connectTcp(protocol, address, port, path, query, options, timeout) do
+		# Add path and query to address
+		if String.valid?(path) and path != "" do
+			address = to_charlist(to_string(address) <> "/" <> path)
+		end
+		if String.valid?(query) and query != "" do
+			address = to_charlist(to_string(address) <> "?" <> query)
+		end
 		cond do
 			protocol == :ws ->
+				# Default port
+				if port == 0 do
+					port = 80
+				end
 				case :gen_tcp.connect(address, port, [:binary, {:packet, 0}, {:active, false}], timeout) do
 					{:ok, socket} ->
 						options = %Websocketex.ClientOptions{options | path: path}
@@ -629,6 +643,10 @@ defmodule Websocketex do
 				end
 			protocol == :wss ->
 				:ssl.start()
+				# Default port
+				if port == 0 do
+					port = 443
+				end
 				case :ssl.connect(address, port, [{:active, false}], timeout) do
 					{:ok, sslSocket} ->
 						options = %Websocketex.ClientOptions{options | path: path, ssl: true}
@@ -675,8 +693,8 @@ defmodule Websocketex do
 						else
 							#Failed
 							# TODO: Send close frame to server
-							close(socket, :protocol_error)
-							{:error, "Protocol error. Malformed handshake."}
+							close(socket, :abnormal_close)
+							{:error, "Protocol error. Malformed handshake. Closing abnormally."}
 						end
 					{:error, reason} -> {:error, reason}
 				end
@@ -707,7 +725,7 @@ defmodule Websocketex do
 			{:ok, {:http_header, _size, "Sec-Websocket-Extensions", _reserved, extensions}} ->
 				process_server_handshake_response(socket, %Websocketex.Headers{headers | sec_websocket_extensions: extensions})
 			# Ignore any other headers
-			#{:ok, {:http_header, _size, _header_field, _otherfield, _value}} -> process_request(socket, headers)
+			{:ok, {:http_header, _size, _header_field, _otherfield, _value}} -> process_request(socket, headers)
 			# If an error occurs receiving
 			{:error, reason} -> {:error, reason}
 			# If there is no matching case
@@ -733,17 +751,23 @@ defmodule Websocketex do
 
 	defp recvTcp(socket, length) do
 		if Record.is_record(socket, :sslsocket) do
-			:ssl.recv(socket, length)
+			case :ssl.recv(socket, length) do
+				{:ok, packet} -> {:ok, packet}
+				{:error, reason} ->
+					if is_context?(:client) do
+						close(socket, :protocol_error)
+					end
+					{:error, reason}
+			end
 		else
-			:gen_tcp.recv(socket, length)
-		end
-	end
-
-	defp recvTcp(socket, length, timeout) do
-		if Record.is_record(socket, :sslsocket) do
-			:ssl.recv(socket, length, timeout)
-		else
-			:gen_tcp.recv(socket, length, timeout)
+			case :gen_tcp.recv(socket, length) do
+				{:ok, packet} -> {:ok, packet}
+				{:error, reason} ->
+					if is_context?(:client) do
+						close(socket, :protocol_error)
+					end
+					{:error, reason}
+			end
 		end
 	end
 
@@ -767,22 +791,26 @@ defmodule Websocketex do
 			data_size = byte_size(data)
 		end
 		#data_size = byte_size(data)
-		if data_size <= @frame_max_size_bytes do
-			frame = frame_up(data, opcode, 1)
-			sendTcp(socket, frame)
+		if data_size > @message_max_byte_size do
+			close(socket, :large_message)
 		else
-			<<datagram::size(@frame_max_size_bits), rest::binary>> = data
-			case get_opcode(opcode) do
-				{:ok, opcode_value} ->
-					if opcode_is?(opcode_value, :contiunation) do
-						# frame_up(data, opcode_type, fin bit)
-						frame = frame_up(datagram, :contiunation, 0)
-					else
-						# Fragmentation starting
-						frame = frame_up(datagram, opcode, 0)
-					end
-					send(socket, rest, 0)
-				:error -> raise "Protocol error. Invalid opcode."
+			if data_size <= @frame_max_size_bytes do
+				frame = frame_up(data, opcode, 1)
+				sendTcp(socket, frame)
+			else
+				<<datagram::size(@frame_max_size_bits), rest::binary>> = data
+				case get_opcode(opcode) do
+					{:ok, opcode_value} ->
+						if opcode_is?(opcode_value, :contiunation) do
+							# frame_up(data, opcode_type, fin bit)
+							frame = frame_up(datagram, :contiunation, 0)
+						else
+							# Fragmentation starting
+							frame = frame_up(datagram, opcode, 0)
+						end
+						send(socket, rest, 0)
+					:error -> raise "Protocol error. Invalid opcode."
+				end
 			end
 		end
 	end
