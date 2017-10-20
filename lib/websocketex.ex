@@ -931,7 +931,7 @@ defmodule Websocketex do
 						if is_context?(:client) do
 							frame = <<frame::binary, binary_data::binary>>
 						else
-							frame = <<frame::binary, binary_data::size(16)>>
+							frame = <<frame::binary, binary_data::binary>>
 						end
 					opcode_is?(opcode, :ping) ->
 						frame = <<frame::binary, binary_data::binary>>
