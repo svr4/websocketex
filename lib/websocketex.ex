@@ -509,7 +509,7 @@ defmodule Websocketex do
 			opcode_is?(opcode, :connection_close) ->
 				case get_status_code(:policy_violation) do
 					{:ok, code} ->
-						Websocketex.send(socket, code, opcode)
+						Websocketex.send(socket, code, :connection_close)
 					:error -> raise "Protocol error. Invalid status code."
 				end
 			# Ping, send pong
@@ -818,7 +818,7 @@ defmodule Websocketex do
 							# Fragmentation starting
 							frame = frame_up(datagram, opcode, 0)
 						end
-						send(socket, rest, 0)
+						send(socket, rest, :continuation)
 					:error -> raise "Protocol error. Invalid opcode."
 				end
 			end
