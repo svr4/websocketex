@@ -538,7 +538,7 @@ defmodule Websocketex do
 		if data_size >= 32 do # If the remaining data is > 32
 			#IO.puts "Size greater than 32"
 			if is_integer(data) do
-				<<datagram::size(32)>> = data
+				<<datagram::size(32)>> = :binary.encode_unsigned(data)
 			else
 				<<datagram::size(32), rest_data::binary >>  = data
 			end
@@ -672,17 +672,23 @@ defmodule Websocketex do
 		{:ok, host} = :inet.gethostname()
 		key = Base.encode64(:crypto.strong_rand_bytes(16))
 		upgrade_request = "GET " <> "/" <> " HTTP/1.1"
-		<> if origin != nil do "\r\nOrigin:http://" <> origin else "" end
-		<>"\r\nHost:" <> to_string(host)
-		<>"\r\nUpgrade:websocket\r\nConnection:Upgrade"
-		<> "\r\nSec-WebSocket-Key:" <> key
-		<> "\r\nSec-WebSocket-Version:" <> Integer.to_string(@websocket_version)
+		<> if origin != nil do "\r\nOrigin: http://" <> origin else "" end
+		<>"\r\nHost: " <> to_string(host)
+		<>"\r\nUpgrade: websocket\r\nConnection: Upgrade"
+		<> "\r\nSec-WebSocket-Key: " <> key
+		<> "\r\nSec-WebSocket-Version: " <> Integer.to_string(@websocket_version)
 		<> if protocols do "Sec-WebSocket-Protocol: " <> Enum.join(protocols, ",") <> "\r\n" else "" end
 		<> if extensions do "Sec-WebSocket-Extensions: " <> Enum.join(extensions, ";") <> "\r\n" else "" end
 		<> "\r\n\r\n"
 		# Send the handshake request to server
 		case sendTcp(socket, upgrade_request) do
 			:ok ->
+				# Change socket to receive http packets
+				if is_ssl?(socket) do
+					:ssl.setopts(socket, [{:packet, :http_bin}])
+				else
+					:ssl.setopts(socket, [{:packet, :http_bin}])
+				end
 				# Handshake sent
 				# Get the response from the server
 				# Server respondend to handshake
@@ -705,33 +711,37 @@ defmodule Websocketex do
 	end
 	# TODO: Handle rest of headers, because auth header may be in the rest
 	defp process_server_handshake_response(socket, headers) do
-		# Change socket to receive http packets
-		if is_ssl?(socket) do
-			:ssl.setopts(socket, [{:packet, :http_bin}])
-		else
-			:ssl.setopts(socket, [{:packet, :http_bin}])
-		end
 
 		case recvTcp(socket, 0) do
 			#{http_response, HttpVersion, integer(), HttpString}
 			{:ok, {:http_response, {1,1}, 101, _httpstring}} ->
+				IO.puts "0"
 				process_server_handshake_response(socket, headers)
 			# Process headers
 			# Required websocket headers
 			# Example: {:ok, {:http_header, 24, :"User-Agent", :undefined, "curl/7.35.0"}}
 			{:ok, {:http_header, _size, :Upgrade, _reserved, upgrade}} ->
+				IO.puts "1"
 				process_server_handshake_response(socket, %Websocketex.Headers{headers | upgrade: upgrade})
 			{:ok, {:http_header, _size, :Connection, _reserved, connection}} ->
+				IO.puts "2"
 				process_server_handshake_response(socket, %Websocketex.Headers{headers | connection: connection})
 			{:ok, {:http_header, _size, "Sec-Websocket-Accept", _reserved, accept}} ->
+				IO.puts "3"
 				process_server_handshake_response(socket, %Websocketex.Headers{headers | sec_websocket_accept: accept})
 			# Optional headers
 			{:ok, {:http_header, _size, "Sec-Websocket-Protocol", _reserved, protocols}} ->
+				IO.puts "4"
 				process_server_handshake_response(socket, %Websocketex.Headers{headers | sec_websocket_protocol: protocols})
 			{:ok, {:http_header, _size, "Sec-Websocket-Extensions", _reserved, extensions}} ->
+				IO.puts "5"
 				process_server_handshake_response(socket, %Websocketex.Headers{headers | sec_websocket_extensions: extensions})
-			# Ignore any other headers
-			{:ok, {:http_header, _size, _header_field, _otherfield, _value}} -> process_request(socket, headers)
+			# Store other headers
+			{:ok, {:http_header, _size, header_field, _otherfield, value}} ->
+				IO.puts "6"
+				%Websocketex.Headers{rest_of_headers: rest_of_headers} = headers
+				rest_of_headers = rest_of_headers ++ [{header_field, value}]
+				process_request(socket, %Websocketex.Headers{headers | rest_of_headers: rest_of_headers})
 			# If an error occurs receiving
 			{:error, reason} -> {:error, reason}
 			# If there is no matching case
