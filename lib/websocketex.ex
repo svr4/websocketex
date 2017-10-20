@@ -313,7 +313,7 @@ defmodule Websocketex do
 			case Websocketex.ServerOptions.is_ssl_ready?(server_options) do
 				true ->
 					# Add ssl files to server options
-					%Websocketex.ServerOptions{caCertificate: ca, certificate: cert, key: key} = get_agent()
+					%Websocketex.ServerOptions{caCertificate: ca, certificate: cert, key: key} = server_options
 					if is_nil(ca) do
 						options = Enum.concat(options, [{:certfile, cert}, {:keyfile, key}])
 					else
