@@ -807,6 +807,7 @@ defmodule Websocketex do
 	def send(socket, data, opcode) do
 		if is_integer(data) do
 			data_size = byte_size(:binary.encode_unsigned(data))
+			data = :binary.encode_unsigned(data)
 		else
 			data_size = byte_size(data)
 		end
