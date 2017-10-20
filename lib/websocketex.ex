@@ -707,7 +707,7 @@ defmodule Websocketex do
 	defp process_server_handshake_response(socket, headers) do
 		# Change socket to receive http packets
 		if is_ssl?(socket) do
-			:ssl.setopts(tcp_socket, [{:packet, :http_bin}])
+			:ssl.setopts(socket, [{:packet, :http_bin}])
 		else
 			:ssl.setopts(socket, [{:packet, :http_bin}])
 		end
