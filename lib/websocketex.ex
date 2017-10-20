@@ -4,7 +4,7 @@ defmodule Websocketex do
 	require Bitwise
 	@websocket_version 13
 	@timeout 20
-	@opcodes %{contiunation: 0x0, text: 0x1, binary: 0x2, connection_close: 0x8, ping: 0x9, pong: 0xA}
+	@opcodes %{continuation: 0x0, text: 0x1, binary: 0x2, connection_close: 0x8, ping: 0x9, pong: 0xA}
 	@status_codes %{normal_closure: 1000, going_away: 1001, protocol_error: 1002, invalid_data: 1003, no_code: 1005, abnormal_close: 1006, non_utf8: 1007, policy_violation: 1008, large_message: 1009, missing_extension: 1010, unexpected_condition: 1011, tls_failed: 1015}
 	@frame_max_size_bytes 1500
 	@frame_max_size_bits @frame_max_size_bytes * 8
@@ -811,9 +811,9 @@ defmodule Websocketex do
 				<<datagram::size(@frame_max_size_bits), rest::binary>> = data
 				case get_opcode(opcode) do
 					{:ok, opcode_value} ->
-						if opcode_is?(opcode_value, :contiunation) do
+						if opcode_is?(opcode_value, :continuation) do
 							# frame_up(data, opcode_type, fin bit)
-							frame = frame_up(datagram, :contiunation, 0)
+							frame = frame_up(datagram, :continuation, 0)
 						else
 							# Fragmentation starting
 							frame = frame_up(datagram, opcode, 0)
@@ -891,8 +891,10 @@ defmodule Websocketex do
 			masking_key = :crypto.strong_rand_bytes(4)
 			binary_data = mask_data(masking_key, binary_data)
 		end
+		IO.puts to_string(opcode_type)
 		case get_opcode(opcode_type) do
 			{:ok, value} ->
+				IO.puts "opcode OK"
 				opcode = value
 				frame = <<fin::size(1), 0::size(3), opcode::size(4), mask::size(1), payload_length::size(7)>>
 				#IO.puts "Frame set OK!"
