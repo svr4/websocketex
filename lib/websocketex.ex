@@ -25,8 +25,7 @@ defmodule Websocketex do
 		#Websocketex.close(socket)
 
 		# New and improved listening version
-		#Websocketex.listen(5678, %Websocketex.ServerOptions{ssl: true, certificate: "domain.crt", key: "domain.key"})
-		Websocketex.listen(5678)
+		Websocketex.listen(5678, %Websocketex.ServerOptions{ssl: true, certificate: "domain.crt", key: "domain.key"})
 		|>
 		loop_server
 
@@ -98,13 +97,12 @@ defmodule Websocketex do
 	end
 
 	def client do
-		 case Websocketex.connect(:ws, '192.168.1.66', 5678) do
+		 case Websocketex.connect(:wss, 'marcel', 5678) do
 		 		{:ok, websocket} ->
 					Websocketex.send(websocket, "Hello", :text)
 					IO.puts "Sent: Hello"
 					server_response = Websocketex.recv(websocket)
 					IO.puts "Received: " <> server_response
-					Websocketex.close(websocket)
 				{:error, reason} -> {:error, reason}
 		 end
 	end
@@ -208,7 +206,12 @@ defmodule Websocketex do
 							<> if extensions do "Sec-WebSocket-Extensions: " <> Enum.join(extensions, ";") <> "\r\n" else "" end
 							<> "\r\n\r\n")
 						# After handshake you must change server opts in order to receive data.
-						:inet.setopts(socket, [{:packet, 0}])
+						if is_ssl?(socket) do
+							{:sslsocket, {:gen_tcp, tcp_socket, :tls_connection, _tls}, _pid} = socket
+							:inet.setopts(tcp_socket, [{:packet, 0}])
+						else
+							:inet.setopts(socket, [{:packet, 0}])
+						end
 
 					false -> sendTcp(socket, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
 				end
@@ -704,7 +707,12 @@ defmodule Websocketex do
 	# TODO: Handle rest of headers, because auth header may be in the rest
 	defp process_server_handshake_response(socket, headers) do
 		# Change socket to receive http packets
-		:inet.setopts(socket, [{:packet, :http_bin}])
+		if is_ssl?(socket) do
+			{:sslsocket, {:gen_tcp, tcp_socket, :tls_connection, _tls}, _pid} = socket
+			:inet.setopts(tcp_socket, [{:packet, :http_bin}])
+		else
+			:inet.setopts(socket, [{:packet, :http_bin}])
+		end
 
 		case recvTcp(socket, 0) do
 			#{http_response, HttpVersion, integer(), HttpString}
@@ -739,7 +747,12 @@ defmodule Websocketex do
 			# End of Headers
 			{:ok, :http_eoh} ->
 				# Change socket back to receive raw data
-				:inet.setopts(socket, [{:packet, 0}])
+				if is_ssl?(socket) do
+					{:sslsocket, {:gen_tcp, tcp_socket, :tls_connection, _tls}, _pid} = socket
+					:inet.setopts(tcp_socket, [{:packet, 0}])
+				else
+					:inet.setopts(socket, [{:packet, 0}])
+				end
 				{:ok, headers}
 			# SSL request on non SSL server socket
 			{:ok, {:http_error, _binary}} ->
@@ -852,7 +865,15 @@ defmodule Websocketex do
 				current_options.__struct__ == Websocketex.ServerOptions
 		end
 	end
-	# TODO: Handle client masking
+
+	defp is_ssl?(socket) do
+		if Record.is_record(socket, :sslsocket) do
+			true
+		else
+			false
+		end
+	end
+
 	defp frame_up(data, opcode_type, fin) do
 		#IO.puts data
 		opcode = nil
