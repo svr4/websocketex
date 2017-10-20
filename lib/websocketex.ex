@@ -207,8 +207,7 @@ defmodule Websocketex do
 							<> "\r\n\r\n")
 						# After handshake you must change server opts in order to receive data.
 						if is_ssl?(socket) do
-							{:sslsocket, {:gen_tcp, tcp_socket, :tls_connection, _tls}, _pid} = socket
-							:inet.setopts(tcp_socket, [{:packet, 0}])
+							:ssl.setopts(socket, [{:packet, 0}])
 						else
 							:inet.setopts(socket, [{:packet, 0}])
 						end
@@ -708,10 +707,9 @@ defmodule Websocketex do
 	defp process_server_handshake_response(socket, headers) do
 		# Change socket to receive http packets
 		if is_ssl?(socket) do
-			{:sslsocket, {:gen_tcp, tcp_socket, :tls_connection, _tls}, _pid} = socket
-			:inet.setopts(tcp_socket, [{:packet, :http_bin}])
+			:ssl.setopts(tcp_socket, [{:packet, :http_bin}])
 		else
-			:inet.setopts(socket, [{:packet, :http_bin}])
+			:ssl.setopts(socket, [{:packet, :http_bin}])
 		end
 
 		case recvTcp(socket, 0) do
@@ -748,8 +746,7 @@ defmodule Websocketex do
 			{:ok, :http_eoh} ->
 				# Change socket back to receive raw data
 				if is_ssl?(socket) do
-					{:sslsocket, {:gen_tcp, tcp_socket, :tls_connection, _tls}, _pid} = socket
-					:inet.setopts(tcp_socket, [{:packet, 0}])
+					:ssl.setopts(socket, [{:packet, 0}])
 				else
 					:inet.setopts(socket, [{:packet, 0}])
 				end
