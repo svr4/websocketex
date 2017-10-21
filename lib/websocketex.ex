@@ -379,7 +379,6 @@ defmodule Websocketex do
 			case packet do
 				{:ok, frame} ->
 					#IO.puts "Frame IN!"
-					IO.puts to_string(frame)
 					<<fin::size(1), _rsv1::size(1), _rsv2::size(1), _rsv3::size(1), opcode::size(4), mask::size(1), payload_length::size(7)>> = frame
 					#IO.puts "First 16 OK!"
 					# If mask is 0, then you must terminate. All client packets must be masked.
