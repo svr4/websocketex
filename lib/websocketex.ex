@@ -687,7 +687,7 @@ defmodule Websocketex do
 				if is_ssl?(socket) do
 					:ssl.setopts(socket, [{:packet, :http_bin}])
 				else
-					:ssl.setopts(socket, [{:packet, :http_bin}])
+					:inet.setopts(socket, [{:packet, :http_bin}])
 				end
 				# Handshake sent
 				# Get the response from the server
@@ -829,6 +829,9 @@ defmodule Websocketex do
 							# Fragmentation starting
 							frame = frame_up(datagram, opcode, 0)
 						end
+						# Send fragmented frame
+						sendTcp(socket, frame)
+						# Process the rest of the data
 						send(socket, rest, :continuation)
 					:error -> raise "Protocol error. Invalid opcode."
 				end
@@ -926,20 +929,7 @@ defmodule Websocketex do
 				if is_context?(:client) do
 					frame = <<frame::binary, masking_key::binary>>
 				end
-				cond do
-					opcode_is?(opcode, :connection_close) ->
-						if is_context?(:client) do
-							frame = <<frame::binary, binary_data::binary>>
-						else
-							frame = <<frame::binary, binary_data::binary>>
-						end
-					opcode_is?(opcode, :ping) ->
-						frame = <<frame::binary, binary_data::binary>>
-					opcode_is?(opcode, :pong) ->
-						frame = <<frame::binary, binary_data::binary>>
-					true ->
-						frame = <<frame::binary, binary_data::binary>>
-				end
+				frame = <<frame::binary, binary_data::binary>>
 				frame
 			:error -> raise "Protocol error. Invalid opcode."
 		end
