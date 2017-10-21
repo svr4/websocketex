@@ -379,6 +379,7 @@ defmodule Websocketex do
 			case packet do
 				{:ok, frame} ->
 					#IO.puts "Frame IN!"
+					IO.puts to_string(frame)
 					<<fin::size(1), _rsv1::size(1), _rsv2::size(1), _rsv3::size(1), opcode::size(4), mask::size(1), payload_length::size(7)>> = frame
 					#IO.puts "First 16 OK!"
 					# If mask is 0, then you must terminate. All client packets must be masked.
@@ -700,7 +701,6 @@ defmodule Websocketex do
 							:ok
 						else
 							#Failed
-							# TODO: Send close frame to server
 							close(socket, :abnormal_close)
 							{:error, "Protocol error. Malformed handshake. Closing abnormally."}
 						end
@@ -807,7 +807,6 @@ defmodule Websocketex do
 	def send(socket, data, opcode) do
 		if is_integer(data) do
 			data_size = byte_size(:binary.encode_unsigned(data))
-			data = :binary.encode_unsigned(data)
 		else
 			data_size = byte_size(data)
 		end
@@ -929,7 +928,12 @@ defmodule Websocketex do
 				if is_context?(:client) do
 					frame = <<frame::binary, masking_key::binary>>
 				end
-				frame = <<frame::binary, binary_data::binary>>
+				# If data is a status code then give bit size, else it's text or binary data
+				if is_integer(data) do
+					frame = <<frame::binary, binary_data::size(16)>>
+				else
+					frame = <<frame::binary, binary_data::binary>>
+				end
 				frame
 			:error -> raise "Protocol error. Invalid opcode."
 		end
