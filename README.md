@@ -1,10 +1,6 @@
 # Websocketex
 
-Work in progress.
-
-* Added support for handling handshake over HTTP or HTTPS
-* Added support for sending and receiving Websocket frames
-* Added support for client and server context
+Version 1.0 released.
 
 <!--## Installation
 
