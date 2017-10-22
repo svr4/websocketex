@@ -99,10 +99,11 @@ defmodule Websocketex do
 	def client do
 		 case Websocketex.connect(:wss, 'marcel', 5678) do
 		 		{:ok, websocket} ->
-					Websocketex.send(websocket, "Hello", :text)
-					IO.puts "Sent: Hello"
-					server_response = Websocketex.recv(websocket)
-					IO.puts "Received: " <> server_response
+					#Websocketex.send(websocket, "Hello", :text)
+					#IO.puts "Sent: Hello"
+					#server_response = Websocketex.recv(websocket)
+					#IO.puts "Received: " <> server_response
+					Websocketex.close(websocket)
 				{:error, reason} -> {:error, reason}
 		 end
 	end
@@ -278,13 +279,15 @@ defmodule Websocketex do
 	end
 
 	defp clean_closure(socket) do
-		shutdown(socket, :read_write)
 		case recvTcp(socket, 2) do
 			# Server close response
-			{:ok, 0} -> closeTcp(socket)
+			{:ok, 0} ->
+				shutdown(socket, :read_write)
+				closeTcp(socket)
 			# Client closed, which SHOULD NOT happen, thus returns a status code to unframe
 			{:ok, <<data::binary>>} ->
 				data = handle_frame({:ok, data}, socket)
+				shutdown(socket, :read_write)
 				closeTcp(socket)
 				data
 			{:error, reason} -> {:error, reason}
@@ -649,7 +652,7 @@ defmodule Websocketex do
 				if port == 0 do
 					port = 443
 				end
-				case :ssl.connect(address, port, [{:active, false}], timeout) do
+				case :ssl.connect(address, port, [:binary, {:active, false}], timeout) do
 					{:ok, sslSocket} ->
 						options = %Websocketex.ClientOptions{options | path: path, ssl: true}
 						start_agent(options)
@@ -754,6 +757,7 @@ defmodule Websocketex do
 			# End of Headers
 			{:ok, :http_eoh} ->
 				# Change socket back to receive raw data
+				IO.puts "got all headers"
 				if is_ssl?(socket) do
 					:ssl.setopts(socket, [{:packet, 0}])
 				else
@@ -772,20 +776,12 @@ defmodule Websocketex do
 		if Record.is_record(socket, :sslsocket) do
 			case :ssl.recv(socket, length) do
 				{:ok, packet} -> {:ok, packet}
-				{:error, reason} ->
-					if is_context?(:client) do
-						close(socket, :protocol_error)
-					end
-					{:error, reason}
+				{:error, reason} -> {:error, reason}
 			end
 		else
 			case :gen_tcp.recv(socket, length) do
 				{:ok, packet} -> {:ok, packet}
-				{:error, reason} ->
-					if is_context?(:client) do
-						close(socket, :protocol_error)
-					end
-					{:error, reason}
+				{:error, reason} -> {:error, reason}
 			end
 		end
 	end
@@ -908,9 +904,12 @@ defmodule Websocketex do
 			{:ok, value} ->
 				IO.puts "opcode OK"
 				opcode = value
-				frame = <<fin::size(1), 0::size(3), opcode::size(4), mask::size(1), payload_length::size(7)>>
+				frame = <<fin::size(1), 0::size(3), opcode::size(4), mask::size(1)>>
 				#IO.puts "Frame set OK!"
 				cond do
+					payload_length <= 125 ->
+						bin_payload_length = <<payload_length::size(7)>>
+						frame = <<frame::bitstring, bin_payload_length::bitstring>>
 					payload_length == 126 ->
 						#IO.puts "126 OK"
 						ext_payload_length = <<126::size(7), _last::size(16)>> = payload_length
@@ -919,20 +918,13 @@ defmodule Websocketex do
 						#IO.puts "127 OK"
 						ext_payload_length = <<127::size(7), _last::size(64)>> = payload_length
 						frame = <<frame::binary, ext_payload_length::binary>>
-					true ->
-						# When payload length is <= than 125, handled in if-else below. Do nothing.
-						true
 				end
 				# Attach masking key or not
 				if is_context?(:client) do
 					frame = <<frame::binary, masking_key::binary>>
 				end
 				# If data is a status code then give bit size, else it's text or binary data
-				if is_integer(data) do
-					frame = <<frame::binary, binary_data::size(16)>>
-				else
-					frame = <<frame::binary, binary_data::binary>>
-				end
+				frame = <<frame::binary, binary_data::binary>>
 				frame
 			:error -> raise "Protocol error. Invalid opcode."
 		end
