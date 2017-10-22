@@ -14,137 +14,6 @@ defmodule Websocketex do
   @moduledoc """
   Documentation for Websocketex.
   """
-
-	def main do
-		# Listen socket, in this case
-		#[:binary, {:packet, :http_bin}, {:active, false}]
-		#{:ok, listenSocket} = Websocketex.listen(5678)
-		#{:ok, socket} = Websocketex.accept(listenSocket)
-		#Websocketex.send(socket, "HTTP/1.1 200 OK\r\n Connection: close\r\n\r\n")
-		#Websocketex.shutdown(socket, :read_write)
-		#Websocketex.close(socket)
-
-		# New and improved listening version
-		Websocketex.listen(5678, %Websocketex.ServerOptions{ssl: true, certificate: "domain.crt", key: "domain.key"})
-		|>
-		loop_server
-
-		# View http headers
-		#lSocket = Websocketex.listen(5678)
-		#{:ok, socket} = :gen_tcp.accept(lSocket)
-		#:gen_tcp.recv(socket, 0)
-
-		#start_agent(%Websocketex.ServerOptions{})
-		#save_agent("protocols", "test")
-		#get_agent()
-		#Agent.stop(__MODULE__, :normal)
-
-		#listening to https to see what comes
-		#lSocket = listen(5678)
-		#{:ok, socket} = :gen_tcp.accept(lSocket)
-		#{:ok, {:http_error, binary_data}} = recv(socket, 0)
-		#binary_data
-
-		#SSL
-
-		#:ssl.start()
-		#{:ok, lSocket} = :gen_tcp.listen(5678, [{:reuseaddr, true}])
-		#{:ok, socket} = :gen_tcp.accept(lSocket)
-		#case :gen_tcp.accept(lSocket) do
-			#{:ok, socket} ->
-				#IO.puts "Socket connected."
-				#:inet.setopts(socket, [{:active, false}])
-				#IO.puts "Opts changed"
-				#Successfull recv() on https request returns
-				# {:ok, [22, 3, 1, 1, 30, 1, 0, 1, 26, 3, 3, 117, 255, 244, 104, 65, 105, 224, 161,
-  			# 117, 108, 129, !"192, 121, 22, 210, 130, 2, 83, 253, 1, 196, 247, 142, 195, 168,
-  			# 191, 162, 184, 79, 118, 119, 156, 0, 0, 118, 192, 48, 192, ...]}
-
-				# Actual SSL handshake
-				#IO.puts "Handshake"
-				#{:ok, sslSocket} = :ssl.ssl_accept(socket, [{:certfile, "domain.crt"}, {:keyfile, "domain.key"}])
-				#case :ssl.ssl_accept(socket, [{:certfile, "domain.crt"}, {:keyfile, "domain.key"}], 20) do
-					#{:ok, sslSocket} ->
-						#IO.puts "Socket secure"
-						#IO.puts Record.is_record(socket, :sslsocket)
-						#:ssl.recv(sslSocket, 0)
-						#:ssl.shutdown(sslSocket, :read_write)
-						#:ssl.close(sslSocket)
-						#:ssl.stop()
-						#IO.puts "SSL stop"
-					#{:error, reason} ->
-						#IO.puts "Socket insecure"
-						#IO.puts Record.is_record(socket, :sslsocket)
-						#:gen_tcp.recv(socket, 0)
-						#:gen_tcp.shutdown(socket, :read_write)
-						#:gen_tcp.close(socket)
-				#end
-			#end
-				#:ssl.recv(sslSocket, 0)
-				#:ssl.stop()
-				#IO.puts "SSL stop"
-
-			#{:error, reason} -> {:error, reason}
-		#end
-
-		#:inet.setopts(socket, [{:active, false}])
-
-		# Actual SSL handshake
-		#{:ok, sslSocket} = :ssl.ssl_accept(socket, [])
-		#recv(sslSocket, 0)
-		#:ssl.stop()
-
-	end
-
-	def client do
-		 case Websocketex.connect(:wss, 'marcel', 5678) do
-		 		{:ok, websocket} ->
-					Websocketex.send(websocket, "Hello", :text)
-					IO.puts "Sent: Hello"
-					server_response = Websocketex.recv(websocket)
-					IO.puts "Received: " <> server_response
-					#Websocketex.close(websocket)
-				{:error, reason} -> {:error, reason}
-		 end
-	end
-
-	def loop_server(lSocket) do
-		IO.puts "Waiting for an incoming connection...."
-		case Websocketex.accept(lSocket) do
-			{:ok, socket} ->
-				IO.puts "Connection received!"
-				#recv_loop(socket, [])
-				message = Websocketex.recv(socket)
-				#IO.puts message
-				Websocketex.send(socket, "echo", :text)
-				#Websocketex.send(socket, "echo2", :text)
-				#Websocketex.send(socket, "Server response 2!", :text)
-				#Websocketex.shutdown(socket, :read_write)
-				Websocketex.close(socket)
-				loop_server(lSocket)
-			{:error, reason} ->
-				IO.puts reason
-				loop_server(lSocket)
-		end
-	end
-
-	def recv_loop(socket, data) do
-		case recvTcp(socket, 2) do
-			{:ok, bin} ->
-				Websocketex.close(socket)
-				<<fin::size(1), rsv1::size(1), rsv2::size(1), rsv3::size(1), opcode::size(4), mask::size(1), payload_length::size(7)>> = bin
-				IO.puts fin
-				IO.puts rsv1
-				IO.puts rsv2
-				IO.puts rsv3
-				IO.puts opcode
-				IO.puts mask
-				IO.puts payload_length
-				#recv_loop(socket, Enum.concat(data, :binary.bin_to_list(bin)))
-			{:error, _reason} -> Enum.to_list(data)
-		end
-	end
-	# TODO: Handle rest of headers a client may send
 	defp process_request(socket, headers) do
 		case recvTcp(socket, 0) do
 			# Get protocol, method and uri
@@ -391,9 +260,7 @@ defmodule Websocketex do
 	defp handle_frame(packet, socket, acc, frag_opcode) do
 			case packet do
 				{:ok, frame} ->
-					#IO.puts "Frame IN!"
 					<<fin::size(1), _rsv1::size(1), _rsv2::size(1), _rsv3::size(1), opcode::size(4), mask::size(1), payload_length::size(7)>> = frame
-					#IO.puts "First 16 OK!"
 					# If mask is 0, then you must terminate. All client packets must be masked.
 					# In server context only
 					if mask == 0 and is_context?(:server) do
@@ -403,7 +270,6 @@ defmodule Websocketex do
 						if mask == 1 and is_context?(:client) do
 							close(socket, :protocol_error)
 						else
-							#IO.puts "Has a mask! OK!"
 							payload_data_length = check_payload_length(payload_length, socket)
 							# Check if the frame has a mask
 							masking_key = cond do
@@ -411,16 +277,12 @@ defmodule Websocketex do
 									# Get the next 4 byes of the masking key
 									case recvTcp(socket, 4) do
 										{:ok, masking_key} ->
-											#IO.puts "Masking key OK!"
 											masking_key
 									end
 								mask == 0 ->
 									0
 								true -> 0
 							end
-							#IO.puts "handle_frame OK!"
-							#IO.puts "Payload Data Lenght: " <> Integer.to_string(payload_data_length)
-							#IO.puts "Masing key: " <> Enum.join(:erlang.binary_to_list(masking_key))
 							# Now get the data in the frame
 							case recvTcp(socket, payload_data_length) do
 								{:ok, rest} ->
@@ -547,37 +409,29 @@ defmodule Websocketex do
 
 	# Reads data in 32 bit chunks, to take advantage of the key's size, until the data left is less than 32 bits. Then it uses the data bit size to XOR with the key.
 	defp unmask_data(masking_key, data, acc) do
-		#IO.puts "unmask in"
 		if is_integer(data) do
 			data_size = bit_size(:binary.encode_unsigned(data)) # Data size in bits
 		else
 			data_size = bit_size(data) # Data size in bits
 		end
-		#IO.puts "data size: " <> Integer.to_string(data_size)
 		if data_size >= 32 do # If the remaining data is > 32
-			#IO.puts "Size greater than 32"
 			if is_integer(data) do
 				<<datagram::size(32)>> = :binary.encode_unsigned(data)
 			else
 				<<datagram::size(32), rest_data::binary >>  = data
 			end
-			#IO.puts "Datagram > 32"
 			<<keygram::size(32), _rest_key::binary>> = masking_key
 			key = keygram
-			#IO.puts "Got Keygram > 32"
 			unmask_data(masking_key, rest_data, <<acc::binary, Bitwise.bxor(key, datagram)::size(32)>>)
 		else
 				if data_size > 0 do
-					#IO.puts "Size less than 32"
 					if is_integer(data) do
 						<<datagram::size(data_size), rest_data::binary>>  = :binary.encode_unsigned(data)
 					else
 						<<datagram::size(data_size), rest_data::binary >>  = data
 					end
-					#IO.puts "Datagram < 32"
 					<<keygram::size(data_size), _rest_key::binary>> = masking_key
 					key = keygram
-					#IO.puts "Got Keygram < 32"
 					unmask_data(masking_key, rest_data, <<acc::binary, Bitwise.bxor(key, datagram)::size(data_size)>>)
 				else # When the data left is 0 return the Payload Data data
 					acc
@@ -741,30 +595,23 @@ defmodule Websocketex do
 		case recvTcp(socket, 0) do
 			#{http_response, HttpVersion, integer(), HttpString}
 			{:ok, {:http_response, {1,1}, 101, _httpstring}} ->
-				IO.puts "0"
 				process_server_handshake_response(socket, headers)
 			# Process headers
 			# Required websocket headers
 			# Example: {:ok, {:http_header, 24, :"User-Agent", :undefined, "curl/7.35.0"}}
 			{:ok, {:http_header, _size, :Upgrade, _reserved, upgrade}} ->
-				IO.puts "1"
 				process_server_handshake_response(socket, %Websocketex.Headers{headers | upgrade: upgrade})
 			{:ok, {:http_header, _size, :Connection, _reserved, connection}} ->
-				IO.puts "2"
 				process_server_handshake_response(socket, %Websocketex.Headers{headers | connection: connection})
 			{:ok, {:http_header, _size, "Sec-Websocket-Accept", _reserved, accept}} ->
-				IO.puts "3"
 				process_server_handshake_response(socket, %Websocketex.Headers{headers | sec_websocket_accept: accept})
 			# Optional headers
 			{:ok, {:http_header, _size, "Sec-Websocket-Protocol", _reserved, protocols}} ->
-				IO.puts "4"
 				process_server_handshake_response(socket, %Websocketex.Headers{headers | sec_websocket_protocol: protocols})
 			{:ok, {:http_header, _size, "Sec-Websocket-Extensions", _reserved, extensions}} ->
-				IO.puts "5"
 				process_server_handshake_response(socket, %Websocketex.Headers{headers | sec_websocket_extensions: extensions})
 			# Store other headers
 			{:ok, {:http_header, _size, header_field, _otherfield, value}} ->
-				IO.puts "6"
 				%Websocketex.Headers{rest_of_headers: rest_of_headers} = headers
 				rest_of_headers = rest_of_headers ++ [{header_field, value}]
 				process_request(socket, %Websocketex.Headers{headers | rest_of_headers: rest_of_headers})
@@ -781,7 +628,6 @@ defmodule Websocketex do
 			# End of Headers
 			{:ok, :http_eoh} ->
 				# Change socket back to receive raw data
-				IO.puts "got all headers"
 				if is_ssl?(socket) do
 					:ssl.setopts(socket, [{:packet, 0}])
 				else
@@ -904,7 +750,6 @@ defmodule Websocketex do
 	end
 
 	defp frame_up(data, opcode_type, fin) do
-		#IO.puts data
 		opcode = nil
 		if is_context?(:client) do
 			mask = 1
@@ -923,23 +768,18 @@ defmodule Websocketex do
 			masking_key = :crypto.strong_rand_bytes(4)
 			binary_data = mask_data(masking_key, binary_data)
 		end
-		IO.puts to_string(opcode_type)
 		case get_opcode(opcode_type) do
 			{:ok, value} ->
-				IO.puts "opcode OK"
 				opcode = value
 				frame = <<fin::size(1), 0::size(3), opcode::size(4), mask::size(1)>>
-				#IO.puts "Frame set OK!"
 				cond do
 					payload_length <= 125 ->
 						bin_payload_length = <<payload_length::size(7)>>
 						frame = <<frame::bitstring, bin_payload_length::bitstring>>
 					payload_length == 126 ->
-						#IO.puts "126 OK"
 						ext_payload_length = <<126::size(7), _last::size(16)>> = payload_length
 						frame = <<frame::binary, ext_payload_length::binary>>
 					payload_length >= 127 ->
-						#IO.puts "127 OK"
 						ext_payload_length = <<127::size(7), _last::size(64)>> = payload_length
 						frame = <<frame::binary, ext_payload_length::binary>>
 				end
