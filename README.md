@@ -2,6 +2,9 @@
 
 Work in progress.
 
+* Added support for handling handshake over HTTP or HTTPS
+* Added support for sending and receiving Websocket frames
+
 <!--## Installation
 
 If [available in Hex](https://hex.pm/docs/publish), the package can be installed

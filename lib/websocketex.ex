@@ -266,7 +266,6 @@ defmodule Websocketex do
 					if mask == 0 and is_context?(:server) do
 						close(socket, :protocol_error)
 					else
-
 						if mask == 1 and is_context?(:client) do
 							close(socket, :protocol_error)
 						else
