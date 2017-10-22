@@ -12,7 +12,7 @@ defmodule Websocketex do
 	@pending_connections 10
 
   @moduledoc """
-  Documentation for Websocketex.
+  This module implements RFC6455, better known as the WebSocket Protocol.
   """
 	defp process_request(socket, headers) do
 		case recvTcp(socket, 0) do
@@ -134,7 +134,15 @@ defmodule Websocketex do
 	defp stop_agent() do
 		Agent.stop(__MODULE__, :normal)
 	end
+	@doc """
+	Closes a WebSocket. Can only be used by the server.
+	# Parameters
+	* WebSocket
 
+	## Examples
+				iex> {:ok, connectedWebsocket} = Websocketex.listen(5678) |> Websocketex.accept
+				iex> Websocketex.close(connectedWebsocket)
+	"""
 	def close(websocket) do
 		if is_context?(:server) do
 			{:ok, code} = get_status_code(:normal_closure)
@@ -180,13 +188,22 @@ defmodule Websocketex do
 			:gen_tcp.close(socket)
 		end
 	end
+	@doc """
+	Listens to a given port and takes server options
+	## Parameters
+	* port
+	* server_options - %Websocketex.ServerOptions struct
 
-	def listen(port, server_options) do
-		options = [:binary, {:packet, :http_bin}, {:active, false}, {:reuseaddr, true}]
-		listen(port, options, server_options)
-	end
+	Note:
+		These configurations will always be present in socket: [:binary, {:packet, :http_bin}, {:active, false}]
 
-	def listen(port, options \\ [:binary, {:packet, :http_bin}, {:active, false}, {:reuseaddr, true}], server_options \\ %Websocketex.ServerOptions{}) do
+	## Examples
+				iex> websocket = Websocketex.listen(5678)
+	"""
+	def listen(port, server_options \\ %Websocketex.ServerOptions{}) do
+		# Will add these socket default options
+		%Websocketex.ServerOptions{socket_options: socket_options} = server_options
+		socket_options = Enum.concat(socket_options, [:binary, {:packet, :http_bin}, {:active, false}])
 		# If the server is configured as an ssl
 		if server_options.ssl do
 			:ssl.start()
@@ -196,11 +213,11 @@ defmodule Websocketex do
 					# Add ssl files to server options
 					%Websocketex.ServerOptions{caCertificate: ca, certificate: cert, key: key} = server_options
 					if is_nil(ca) do
-						options = Enum.concat(options, [{:certfile, cert}, {:keyfile, key}])
+						socket_options = Enum.concat(socket_options, [{:certfile, cert}, {:keyfile, key}])
 					else
-						options = Enum.concat(options, [{:cacertfile, ca}, {:certfile, cert}, {:keyfile, key}])
+						socket_options = Enum.concat(socket_options, [{:cacertfile, ca}, {:certfile, cert}, {:keyfile, key}])
 					end
-					case :ssl.listen(port, options) do
+					case :ssl.listen(port, socket_options) do
 						{:ok, sslSocket} ->
 							start_agent(server_options) # save the options
 							sslSocket
@@ -210,7 +227,7 @@ defmodule Websocketex do
 					{:error, "Missing Certificate or Key file."}
 			end
 		else # plain old TCP sockets
-			case :gen_tcp.listen(port, options) do
+			case :gen_tcp.listen(port, socket_options) do
 				{:ok, listenSocket} ->
 						# Save server options into an Agent, so the process state can be accesed throughout functions
 						start_agent(server_options)
@@ -237,7 +254,15 @@ defmodule Websocketex do
 			{:error, reason} -> {:error, reason}
 		end
 	end
+	@doc """
+	Accepts an incoming WebSocket connection request
+	## Parameters
+	* listeningSocket
 
+	## Examples
+				iex> {:ok, connectedWebsocket} = Websocketex.listen(5678) |> Websocketex.accept
+
+	"""
 	def accept(socket) do
 		# acceptTcp() determines if the socket is ssl socket or not and uses the appropriate code
 		case acceptTcp(socket) do
@@ -465,6 +490,16 @@ defmodule Websocketex do
 	end
 
 	# Handles all incoming data from clients and servers
+	@doc """
+	Receives data from a WebSocket
+	## Parameters
+	* WebSocket
+
+	## Examples
+				iex> {:ok, connectedWebsocket} = Websocketex.listen(5678) |> Websocketex.accept
+				iex> Websocketex.recv(connectedWebsocket)
+
+	"""
 	def recv(socket) do
 		# Get the first 2 bytes or 16 bits of the frame
 		recvTcp(socket, 2)
@@ -478,7 +513,23 @@ defmodule Websocketex do
 			:gen_tcp.shutdown(socket, how)
 		end
 	end
+	@doc """
+	Connects to a WebSocket server
+	## Parameters
+	* Protocol - :ws or :wss
+	* Address - localhost or 192.168.1.1 or domain.com
+	* Port - 1234
+	* Path - chat/connected
+	* Query - ?var1=45
+	* Options - %Websocketex.ClientOptions - Struct
+	* timeout - Number of seconds in milliseconds
 
+	Note:
+		These configurations will always be present in socket: [:binary, {:active, false}]]
+
+	## Examples
+				iex> {:ok, websocket} = Websocketex.connect(:ws, 'localhost', 5678)
+	"""
 	def connect(protocol, address) do
 		connect(protocol, address, %Websocketex.ClientOptions{})
 	end
@@ -488,8 +539,6 @@ defmodule Websocketex do
 	end
 
 	# TODO: Serialize multiple connect's, there can only be one CONNECTING at a time
-	# TODO: _Fail Websocket Connection_
-	# TODO: Abort
 	defp connectTcp(protocol, address, port, path, query, options, timeout) do
 		# Add path and query to address
 		if String.valid?(path) and path != "" do
@@ -505,9 +554,7 @@ defmodule Websocketex do
 					port = 80
 				end
 				%Websocketex.ClientOptions{socket_options: socket_options} = options
-				if Enum.empty?(socket_options) do
-					socket_options = Enum.concat(socket_options, [:binary, {:packet, 0}, {:active, false}])
-				end
+				socket_options = Enum.concat(socket_options, [:binary, {:active, false}])
 				case :gen_tcp.connect(address, port, socket_options, timeout) do
 					{:ok, socket} ->
 						options = %Websocketex.ClientOptions{options | path: path, socket_options: socket_options}
@@ -526,9 +573,7 @@ defmodule Websocketex do
 					port = 443
 				end
 				%Websocketex.ClientOptions{socket_options: socket_options} = options
-				if Enum.empty?(socket_options) do
-					socket_options = Enum.concat(socket_options, [:binary, {:active, false}])
-				end
+				socket_options = Enum.concat(socket_options, [:binary, {:active, false}])
 				case :ssl.connect(address, port, socket_options, timeout) do
 					{:ok, sslSocket} ->
 						options = %Websocketex.ClientOptions{options | path: path, ssl: true, socket_options: socket_options}
@@ -548,7 +593,7 @@ defmodule Websocketex do
 	# TODO: Manage the rest of the header a client may specify
 	defp send_handshake_request(socket, options) do
 		# From the handshake
-		%Websocketex.ClientOptions{path: path, origin: origin, protocols: protocols, extensions: extensions} = options
+		%Websocketex.ClientOptions{origin: origin, protocols: protocols, extensions: extensions} = options
 		{:ok, host} = :inet.gethostname()
 		key = Base.encode64(:crypto.strong_rand_bytes(16))
 		upgrade_request = "GET " <> "/" <> " HTTP/1.1"
@@ -668,6 +713,17 @@ defmodule Websocketex do
 	end
 
 	# Send framed data to the WebSocket server
+	@doc """
+	Sends data over the WebSocket
+	## Parameters
+	* WebSocket
+	* data - text or binary data
+	* opcode - :text
+
+	## Examples
+				iex> {:ok, websocket} = Websocketex.connect(:ws, 'localhost', 5678)
+				iex> Websocketex.send(websocket, "echo", :text)
+	"""
 	def send(socket, data, opcode) do
 		if is_integer(data) do
 			data_size = byte_size(:binary.encode_unsigned(data))
