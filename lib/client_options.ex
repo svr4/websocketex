@@ -1,6 +1,6 @@
 defmodule Websocketex.ClientOptions do
   # Struct containing various client options
-	defstruct protocols: nil, extensions: nil, origin: nil, ssl: false, path: nil, query: nil
+	defstruct protocols: nil, extensions: nil, origin: nil, ssl: false, path: nil, query: nil, socket_options: []
 
 	def check_protocol(client_protocols, server_protocol) do
 		if client_protocols == nil and server_protocol == nil do

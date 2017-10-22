@@ -267,9 +267,13 @@ defmodule Websocketex do
 	end
 
 	def close(websocket) do
-		{:ok, code} = get_status_code(:normal_closure)
-		Websocketex.send(websocket, code, :connection_close)
-		clean_closure(websocket)
+		if is_context?(:server) do
+			{:ok, code} = get_status_code(:normal_closure)
+			Websocketex.send(websocket, code, :connection_close)
+			clean_closure(websocket)
+		else
+			{:error, "Client cannot close WebSocket connection."}
+		end
 	end
 
 	defp close(socket, status_code_type) do
@@ -508,7 +512,13 @@ defmodule Websocketex do
 					close(socket, :non_utf8)
 				end
 			opcode_is?(opcode, :binary) ->
-				data
+				if is_binary(data) do
+					data
+				else
+					close(socket, :invalid_data)
+				end
+			true ->
+				close(socket, :protocol_error)
 		end
 	end
 
@@ -641,9 +651,13 @@ defmodule Websocketex do
 				if port == 0 do
 					port = 80
 				end
-				case :gen_tcp.connect(address, port, [:binary, {:packet, 0}, {:active, false}], timeout) do
+				%Websocketex.ClientOptions{socket_options: socket_options} = options
+				if Enum.empty?(socket_options) do
+					socket_options = Enum.concat(socket_options, [:binary, {:packet, 0}, {:active, false}])
+				end
+				case :gen_tcp.connect(address, port, socket_options, timeout) do
 					{:ok, socket} ->
-						options = %Websocketex.ClientOptions{options | path: path}
+						options = %Websocketex.ClientOptions{options | path: path, socket_options: socket_options}
 						start_agent(options)
 						case send_handshake_request(socket, options) do
 							:ok ->
@@ -658,9 +672,13 @@ defmodule Websocketex do
 				if port == 0 do
 					port = 443
 				end
-				case :ssl.connect(address, port, [:binary, {:active, false}], timeout) do
+				%Websocketex.ClientOptions{socket_options: socket_options} = options
+				if Enum.empty?(socket_options) do
+					socket_options = Enum.concat(socket_options, [:binary, {:active, false}])
+				end
+				case :ssl.connect(address, port, socket_options, timeout) do
 					{:ok, sslSocket} ->
-						options = %Websocketex.ClientOptions{options | path: path, ssl: true}
+						options = %Websocketex.ClientOptions{options | path: path, ssl: true, socket_options: socket_options}
 						start_agent(options)
 						case send_handshake_request(sslSocket, options) do
 							:ok ->
