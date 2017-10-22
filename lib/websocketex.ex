@@ -99,11 +99,11 @@ defmodule Websocketex do
 	def client do
 		 case Websocketex.connect(:wss, 'marcel', 5678) do
 		 		{:ok, websocket} ->
-					#Websocketex.send(websocket, "Hello", :text)
-					#IO.puts "Sent: Hello"
-					#server_response = Websocketex.recv(websocket)
-					#IO.puts "Received: " <> server_response
-					Websocketex.close(websocket)
+					Websocketex.send(websocket, "Hello", :text)
+					IO.puts "Sent: Hello"
+					server_response = Websocketex.recv(websocket)
+					IO.puts "Received: " <> server_response
+					#Websocketex.close(websocket)
 				{:error, reason} -> {:error, reason}
 		 end
 	end
@@ -924,7 +924,12 @@ defmodule Websocketex do
 					frame = <<frame::binary, masking_key::binary>>
 				end
 				# If data is a status code then give bit size, else it's text or binary data
-				frame = <<frame::binary, binary_data::binary>>
+				if is_integer(data) and is_context?(:server) do
+					bitstring_data = <<binary_data::size(payload_length)>>
+					frame = <<frame::bitstring, bitstring_data::bitstring>>
+				else
+					frame = <<frame::binary, binary_data::binary>>
+				end
 				frame
 			:error -> raise "Protocol error. Invalid opcode."
 		end
