@@ -925,7 +925,7 @@ defmodule Websocketex do
 				end
 				# If data is a status code then give bit size, else it's text or binary data
 				if is_integer(data) and is_context?(:server) do
-					bitstring_data = <<binary_data::size(payload_length)>>
+					bitstring_data = <<binary_data::size(16)>>
 					frame = <<frame::bitstring, bitstring_data::bitstring>>
 				else
 					frame = <<frame::binary, binary_data::binary>>
