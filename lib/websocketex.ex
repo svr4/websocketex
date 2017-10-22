@@ -279,18 +279,24 @@ defmodule Websocketex do
 	end
 
 	defp clean_closure(socket) do
-		case recvTcp(socket, 2) do
-			# Server close response
-			{:ok, 0} ->
-				shutdown(socket, :read_write)
-				closeTcp(socket)
-			# Client closed, which SHOULD NOT happen, thus returns a status code to unframe
-			{:ok, <<data::binary>>} ->
-				data = handle_frame({:ok, data}, socket)
-				shutdown(socket, :read_write)
-				closeTcp(socket)
-				data
-			{:error, reason} -> {:error, reason}
+		if is_context?(:server) do
+			shutdown(socket, :read_write)
+			closeTcp(socket)
+		else
+			# Waiting for server close response when client initiates close
+			case recvTcp(socket, 2) do
+				# Close with no bin data received
+				{:ok, 0} ->
+					shutdown(socket, :read_write)
+					closeTcp(socket)
+				# Close with bin data received
+				{:ok, <<data::binary>>} ->
+					data = handle_frame({:ok, data}, socket)
+					shutdown(socket, :read_write)
+					closeTcp(socket)
+					data
+				{:error, reason} -> {:error, reason}
+			end
 		end
 	end
 
