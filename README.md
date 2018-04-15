@@ -1,6 +1,6 @@
 # Websocketex
 
-Version 1.0 released.
+Version 1.1 released.
 
 <!--## Installation
 
