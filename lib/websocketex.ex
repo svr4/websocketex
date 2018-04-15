@@ -619,18 +619,24 @@ defmodule Websocketex do
 				# Server respondend to handshake
 				case process_server_handshake_response(socket, %Websocketex.Headers{}) do
 					{:ok, headers} ->
-						%Websocketex.Headers{sec_websocket_protocol: server_protocol, sec_websocket_extensions: server_extensions} = headers
-						if Websocketex.Headers.check_client_headers(headers, key) and Websocketex.ClientOptions.check_protocol(protocols, server_protocol) and Websocketex.ClientOptions.check_extensions(extensions, server_extensions) do
-							# handshake ok
-							:ok
-						else
-							#Failed
-							close(socket, :abnormal_close)
-							{:error, "Protocol error. Malformed handshake. Closing abnormally."}
-						end
+						validate_handshake_response_headers(socket, headers, key, protocols, extensions)
+					{:ok, port, headers}->
+						validate_handshake_response_headers(socket, headers, key, protocols, extensions)
 					{:error, reason} -> {:error, reason}
 				end
 			{:error, reason} -> {:error, reason}
+		end
+	end
+
+	defp validate_handshake_response_headers(socket, headers, key, protocols, extensions) do
+		%Websocketex.Headers{sec_websocket_protocol: server_protocol, sec_websocket_extensions: server_extensions} = headers
+		if Websocketex.Headers.check_client_headers(headers, key) and Websocketex.ClientOptions.check_protocol(protocols, server_protocol) and Websocketex.ClientOptions.check_extensions(extensions, server_extensions) do
+			# handshake ok
+			:ok
+		else
+			#Failed
+			close(socket, :abnormal_close)
+			{:error, "Protocol error. Malformed handshake. Closing abnormally."}
 		end
 	end
 	# TODO: Handle rest of headers, because auth header may be in the rest
